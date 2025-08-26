@@ -1,0 +1,13 @@
+# dexed-py
+
+> Python bindings for the Dexed DX7 synthesizer. High-level Patch API, DX7 sysex support, ML-friendly 145-parameter arrays, custom operator graphs, per-operator rendering, and algorithm metadata.
+
+## Docs
+
+- [Quick Start](quickstart.md): Installation, usage examples, sysex loading, Patch/Preset conversion, JAX integration, custom operator graphs
+- [API Reference](api.md): Full API docs for DexedSynth, Patch, Preset, OperatorGraph, GraphOperator, GraphEnvelope, and algorithm utilities
+- [Parameter Format](parameter-format.md): The 145-parameter normalized array layout, continuous vs integer indices, operator bundles, JAX PyTree usage
+
+## Full Documentation
+
+- [llms-full.txt](llms-full.txt): Complete documentation in a single file

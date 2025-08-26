@@ -1,0 +1,14 @@
+include LICENSE
+include README.md
+include pyproject.toml
+include CMakeLists.txt
+include setup.py
+recursive-include src *.cpp *.h *.cc
+recursive-include dexed *.py
+recursive-include tests *.py
+recursive-include nanobind *
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude .git
+global-exclude .gitignore
+global-exclude .gitmodules

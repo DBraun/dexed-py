@@ -1,23 +1,59 @@
-Builds/VisualStudio2017/Dexed.vcxproj.user
-Builds/VisualStudio2017/Dexed.sdf
-Builds/VisualStudio2017/Debug
-Builds/VisualStudio2017/Release
-Builds/VisualStudio2017/x64
-Builds/VisualStudio2017/Dexed.vcxproj.filters
-Builds/VisualStudio2017/
-.vs/
-*.exe
-
-JuceLibraryCode/
+# Build directories
+build*/
+dist/
+wheelhouse/
+*.egg-info/
 Builds/
-assets/
 products/
 
-.DS_Store
-build*/
+# Compiled Python files
+__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+
+# C/C++ extensions
+*.so
+*.dll
+*.dylib
+*.pyd
+
+# Package build artifacts  
+dexed/*.so
+dexed/*.pyd
+dexed/*.dll
+
+# Test outputs
+*.wav
+tests/*.wav
+
+# IDE and editor files
+.vscode/
+.idea/
+.vs/
+cmake-build-*/
 .cache/
 
-# CLION
-.idea
-cmake-build-*
+# OS files
+.DS_Store
+Thumbs.db
+
+# JUCE artifacts
+JuceLibraryCode/
+assets/
+
+# Virtual environments
+venv/
+.venv/
+
+# Docs build
+docs/_build/
+
+# nanobind build
+nanobind/build/
+
+# Misc
+*.exe
+*.whl
 ignore/
+.claude/

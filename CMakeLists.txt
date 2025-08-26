@@ -1,66 +1,74 @@
-cmake_minimum_required(VERSION 3.16)
-project(Dexed VERSION 0.9.6)
+cmake_minimum_required(VERSION 3.15...3.29)
+project(dexed)
 
-#Compile commands, useful for some IDEs like VS-Code
-set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
-
-#Minimum MacOS target, set globally
-
-if (${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
-    set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0 CACHE STRING "Minimum OS X deployment version" FORCE)
-
-    #code signing to run on an iOS device:
-#    set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "iPhone Developer" CACHE STRING "" FORCE)
-#    set(CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "XXXXXXXXXX" CACHE STRING "" FORCE)
-else()
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.9" CACHE STRING "Minimum OS X deployment version" FORCE)
+# Allow Python executable to be specified via command line
+if(DEFINED Python_EXECUTABLE)
+    set(Python_ROOT_DIR "")
+    set(Python_FIND_STRATEGY LOCATION)
 endif()
 
-if (CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE INTERNAL "")
+# Find Python and nanobind
+find_package(Python 3.11 COMPONENTS Interpreter Development.Module REQUIRED)
+
+# Check if nanobind submodule is present
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/nanobind/CMakeLists.txt")
+    message(FATAL_ERROR "Nanobind submodule not found. Please run: git submodule update --init --recursive")
 endif()
 
-#static linking in Windows
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# Disable nanobind tests and extras to speed up configuration
+set(NB_TEST OFF CACHE INTERNAL "")
+set(NB_TEST_STABLE_ABI OFF CACHE INTERNAL "")
+set(NB_TEST_SHARED_BUILD OFF CACHE INTERNAL "")
 
-# include JUCE *AFTER* the MSVC runtime and so on is set up
-set(DEXED_JUCE_PATH "${CMAKE_SOURCE_DIR}/libs/JUCE" CACHE STRING "Path to JUCE library source tree")
-add_subdirectory(${DEXED_JUCE_PATH} ${CMAKE_BINARY_DIR}/JUCE EXCLUDE_FROM_ALL)
-add_subdirectory(libs/clap-juce-extensions EXCLUDE_FROM_ALL)
+# Add nanobind from submodule
+add_subdirectory(nanobind)
 
-#Adds all the module sources so they appear correctly in the IDE
-set_property(GLOBAL PROPERTY USE_FOLDERS YES)
-option(JUCE_ENABLE_MODULE_SOURCE_GROUPS "Enable Module Source Groups" ON)
+# Dexed source files (excluding tuning.cc which has JUCE dependencies)
+set(DEXED_SOURCES
+    src/msfa/dx7note.cc
+    src/msfa/env.cc
+    src/msfa/exp2.cc
+    src/msfa/fm_core.cc
+    src/msfa/fm_op_kernel.cc
+    src/msfa/freqlut.cc
+    src/msfa/lfo.cc
+    src/msfa/pitchenv.cc
+    src/msfa/sin.cc
+    src/EngineMkI.cpp
+    src/EngineOpl.cpp
+)
 
-#set any of these to "ON" if you want to build one of the juce examples
-#or extras (Projucer/AudioPluginHost, etc):
-option(JUCE_BUILD_EXTRAS "Build JUCE Extras" OFF)
-option(JUCE_BUILD_EXAMPLES "Build JUCE Examples" OFF)
+# Create the Python module
+# Use a different name for the compiled module to avoid naming conflicts
+nanobind_add_module(
+    _dexed
+    src/dexed.cpp
+    ${DEXED_SOURCES}
+)
 
-add_subdirectory(libs)
-add_subdirectory(Resources)
-add_subdirectory(Source)
+# Set C++ standard
+target_compile_features(_dexed PRIVATE cxx_std_17)
 
-# uncomment to enable warnings are errors,
-# suppress warnings (or remove when fixed)
-# or add -Wall, -Wextra or specific warnings as you see fit 
-if (APPLE)
-target_compile_options(${PROJECT_NAME} PUBLIC
-        #-Werror
-        #-Wno-deprecated-declarations
-        #-Wno-unused-value
-        )
-elseif(UNIX AND NOT APPLE)
-target_compile_options(${PROJECT_NAME} PUBLIC
-        #-Werror
-        -Wno-deprecated-declarations
-        -Wno-unused-value
-        )
-else()
-target_compile_options(${PROJECT_NAME} PUBLIC
-        #/WX # Warnings are errors
-        #/wd4996 # deprecated-declarations
-        # (I don't know all the windows warning numbers
-        #  replace cxxx with /wdxxx to supress them)
-        )
-endif()
+# Include directories
+target_include_directories(_dexed PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/msfa
+)
+
+# nanobind_add_module already handles the linking
+
+# Installation rules for scikit-build-core
+install(TARGETS _dexed LIBRARY DESTINATION dexed COMPONENT python_modules)
+
+# Install Python package files
+install(FILES
+    dexed/__init__.py
+    dexed/version.py
+    dexed/algorithms.py
+    dexed/graph.py
+    dexed/patch.py
+    dexed/preset.py
+    dexed/synth.py
+    DESTINATION dexed
+    COMPONENT python_modules
+)

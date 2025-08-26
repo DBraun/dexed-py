@@ -1,0 +1,80 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.10",
+    "nanobind>=2.0.0"
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "dexed-py"
+version = "0.1.0"
+description = "Python bindings for Dexed DX7 synthesizer"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "David Braun", email = "braun@ccrma.stanford.edu"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Sound Synthesis",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14"
+]
+keywords = ["audio", "music", "sound", "synthesizer", "dx7", "fm"]
+dependencies = [
+    "numpy"
+]
+
+[project.optional-dependencies]
+docs = [
+    "sphinx",
+    "myst-parser",
+    "sphinx-rtd-theme",
+    "sphinx-llm",
+    "sphinx-autodoc-typehints",
+]
+
+[project.urls]
+Homepage = "https://github.com/DBraun/dexed-py"
+Source = "https://github.com/DBraun/dexed-py"
+Documentation = "https://dbraun.github.io/dexed-py/"
+Tracker = "https://github.com/DBraun/dexed-py/issues"
+
+[tool.scikit-build]
+# Require CMake 3.15+
+cmake.version = ">=3.15"
+# Build in Release mode by default
+cmake.build-type = "Release"
+# Build the shared library
+build.targets = ["_dexed"]
+# Install the Python module
+install.components = ["python_modules"]
+# Enable verbose builds for debugging (use build.verbose for scikit-build-core >= 0.10)
+build.verbose = false
+# Ensure source distributions include submodules
+sdist.include = ["nanobind/**"]
+
+[tool.scikit-build.cmake.define]
+CMAKE_POSITION_INDEPENDENT_CODE = "ON"
+
+
+[tool.cibuildwheel]
+# Ensure Python executable is passed to the build script
+environment = { PYTHON = "python" }
+# Build for Python 3.11 through 3.14 (including free-threaded)
+build = "cp311-* cp312-* cp313-* cp314-* cp314t-*"
+# Skip 32-bit builds
+skip = "*-win32 *-musllinux_i686 *i686"
+# Test that the module can be imported
+test-requires = "pytest numpy scipy"
+test-command = "cd {project}/tests && python -m pytest test_dexed.py -v"
