@@ -171,7 +171,7 @@ for i in range(7):
 for i in range(6, 0, -1):
     graph.connect(i, i - 1)
 graph.set_carriers([0])
-graph.set_feedback(6, level=7)
+graph.set_feedback(6, 6, level=7)
 
 audio = graph.render(sample_rate=44100, midi_note=60, velocity=100,
                      note_duration=1.0, render_duration=1.5)

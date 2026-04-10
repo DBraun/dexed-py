@@ -150,7 +150,7 @@ from dexed import algorithms, get_carriers, get_modulators, get_mod_matrix
 alg = algorithms[15]
 print(f"Algorithm 15 carriers: {alg.carriers}")
 print(f"Algorithm 15 modulators: {alg.modulators}")
-print(f"Feedback operator: {alg.feedback_op}")
+print(f"Feedback edge: {alg.feedback_edge}")  # (source, target) — same op for self-loops
 print(f"Modulation matrix:\n{alg.mod_matrix}")   # 6x6 int8
 
 carriers = get_carriers(31)   # [0, 1, 2, 3, 4, 5] — all parallel
@@ -205,7 +205,7 @@ for i in range(6, 0, -1):
     graph.connect(i, i - 1)
 
 graph.set_carriers([0])
-graph.set_feedback(6, level=7)
+graph.set_feedback(6, 6, level=7)
 
 audio = graph.render(sample_rate=44100, midi_note=60, velocity=100,
                      note_duration=1.0, render_duration=1.5)

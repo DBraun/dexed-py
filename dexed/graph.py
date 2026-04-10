@@ -4,7 +4,7 @@ Custom operator graph for FM synthesis with arbitrary topology.
 This module provides a DX7-accurate FM synthesis implementation that allows:
 - Arbitrary number of operators (not limited to 6)
 - Custom modulation routing between any operators
-- Per-operator feedback
+- Per-operator feedback (including cross-operator feedback)
 - Flexible carrier selection
 
 The implementation closely follows Dexed's algorithms for:
@@ -29,7 +29,7 @@ Example:
 
     # Set carrier(s) and feedback
     graph.set_carriers([0])
-    graph.set_feedback(6, level=7)
+    graph.set_feedback(6, 6, level=7)
 
     # Render
     audio = graph.render(sample_rate=44100, midi_note=60, velocity=100,
@@ -462,7 +462,7 @@ class OperatorGraph:
         self._operators = [GraphOperator() for _ in range(num_ops)]
         self._mod_matrix = np.zeros((num_ops, num_ops), dtype=np.float32)
         self._carriers: List[int] = []  # 0-indexed internally
-        self._feedback: Dict[int, int] = {}  # 0-indexed -> feedback level (0-7)
+        self._feedback: Dict[Tuple[int, int], int] = {}  # (source, target) -> level (0-7)
         self.op = _OperatorAccessor(self)
 
     def connect(self, source: int, target: int, amount: float = 1.0) -> 'OperatorGraph':
@@ -505,23 +505,28 @@ class OperatorGraph:
         self._carriers = list(carriers)
         return self
 
-    def set_feedback(self, op: int, level: int = 7) -> 'OperatorGraph':
+    def set_feedback(self, source: int, target: int, level: int = 7) -> 'OperatorGraph':
         """
-        Set self-feedback level for an operator (DX7 style).
+        Set feedback from one operator's output to another's input.
 
         Args:
-            op: Operator index (0-indexed)
+            source: Source operator index (0-indexed) whose output is fed back
+            target: Target operator index (0-indexed) that receives feedback.
+                Same as source for self-feedback.
             level: Feedback level 0-7 (0 disables, 7 is maximum)
 
         Returns:
             self for method chaining
         """
-        if not 0 <= op < self.num_ops:
-            raise ValueError(f"Operator must be 0-{self.num_ops - 1}, got {op}")
+        if not 0 <= source < self.num_ops:
+            raise ValueError(f"Source operator must be 0-{self.num_ops - 1}, got {source}")
+        if not 0 <= target < self.num_ops:
+            raise ValueError(f"Target operator must be 0-{self.num_ops - 1}, got {target}")
+        edge = (source, target)
         if level > 0:
-            self._feedback[op] = min(7, max(0, level))
-        elif op in self._feedback:
-            del self._feedback[op]
+            self._feedback[edge] = min(7, max(0, level))
+        elif edge in self._feedback:
+            del self._feedback[edge]
         return self
 
     @property
@@ -611,11 +616,13 @@ class OperatorGraph:
             raise ValueError(f"Target must be 0-{self.num_ops - 1}, got {target}")
         return float(self._mod_matrix[target, source])
 
-    def get_feedback(self, op: int) -> int:
-        """Get feedback level for an operator (0 if none)."""
-        if not 0 <= op < self.num_ops:
-            raise ValueError(f"Operator must be 0-{self.num_ops - 1}, got {op}")
-        return self._feedback.get(op, 0)
+    def get_feedback(self, source: int, target: int) -> int:
+        """Get feedback level for a source->target edge (0 if none)."""
+        if not 0 <= source < self.num_ops:
+            raise ValueError(f"Source operator must be 0-{self.num_ops - 1}, got {source}")
+        if not 0 <= target < self.num_ops:
+            raise ValueError(f"Target operator must be 0-{self.num_ops - 1}, got {target}")
+        return self._feedback.get((source, target), 0)
 
     def disconnect_all(self) -> 'OperatorGraph':
         """Remove all connections (reset to isolated operators)."""
@@ -645,8 +652,8 @@ class OperatorGraph:
 
         if self._feedback:
             lines.append("  Feedback:")
-            for op, level in sorted(self._feedback.items()):
-                lines.append(f"    Op {op}: level {level}")
+            for (src, tgt), level in sorted(self._feedback.items()):
+                lines.append(f"    Op {src} -> Op {tgt}: level {level}")
 
         return "\n".join(lines)
 
@@ -675,8 +682,8 @@ class OperatorGraph:
                 lines.append(f"    op{src} -->|{amt}| op{tgt}")
 
         # Define feedback loops
-        for op_idx, level in self._feedback.items():
-            lines.append(f"    op{op_idx} -.->|fb:{level}| op{op_idx}")
+        for (src, tgt), level in self._feedback.items():
+            lines.append(f"    op{src} -.->|fb:{level}| op{tgt}")
 
         # Carrier style
         lines.append("    classDef carrier fill:#90EE90")
@@ -728,7 +735,7 @@ class OperatorGraph:
         lines.append(f"Carriers: {', '.join(map(str, self.carriers))}")
 
         if self._feedback:
-            fb_strs = [f"{op} (level {level})" for op, level in sorted(self._feedback.items())]
+            fb_strs = [f"{src}->{tgt} (level {level})" for (src, tgt), level in sorted(self._feedback.items())]
             lines.append(f"Feedback: {', '.join(fb_strs)}")
 
         return "\n".join(lines)
@@ -875,17 +882,20 @@ class OperatorGraph:
         # Initialize state
         phases = np.zeros(self.num_ops, dtype=np.int64)
         outputs = np.zeros(self.num_ops, dtype=np.int64)  # Q24 fixed point
-        fb_bufs = [[0, 0] for _ in range(self.num_ops)]  # Feedback buffers
-
-        # Compute feedback shifts
-        # Note: Dexed adds +2 to fb_shift for algorithms 4, 6, 32 (when normalize_feedback=false)
-        # For generic OperatorGraph, we use the standard formula without the +2 offset
+        # Feedback state: keyed by (source, target) edge
+        fb_bufs = {}
         fb_shifts = {}
-        for op_idx, level in self._feedback.items():
+        fb_sources: Dict[int, List[Tuple[int, int]]] = {}
+        fb_targets: Dict[int, List[Tuple[int, int]]] = {}
+        for (src, tgt), level in self._feedback.items():
+            edge = (src, tgt)
             if level > 0:
-                fb_shifts[op_idx] = FEEDBACK_BITDEPTH - level
+                fb_shifts[edge] = FEEDBACK_BITDEPTH - level
             else:
-                fb_shifts[op_idx] = 16  # Effectively disabled
+                fb_shifts[edge] = 16  # Effectively disabled
+            fb_bufs[edge] = [0, 0]
+            fb_sources.setdefault(src, []).append(edge)
+            fb_targets.setdefault(tgt, []).append(edge)
 
         order = self._compute_processing_order()
         output = np.zeros(num_samples, dtype=np.float64)
@@ -940,16 +950,15 @@ class OperatorGraph:
                             if weight != 0:
                                 mod_input += int(outputs[source_idx] * weight)
 
-                    # Check for feedback (matches Dexed's compute_fb order)
-                    if op_idx in fb_shifts:
-                        fb_shift = fb_shifts[op_idx]
+                    # Target reads from feedback buffer(s)
+                    for edge in fb_targets.get(op_idx, []):
+                        fb_shift = fb_shifts[edge]
                         if fb_shift < 16:
-                            y0 = fb_bufs[op_idx][0]
-                            y1 = fb_bufs[op_idx][1]
+                            y0 = fb_bufs[edge][0]
+                            y1 = fb_bufs[edge][1]
                             scaled_fb = (y0 + y1) >> (fb_shift + 1)
                             mod_input += scaled_fb
-                            # Shift buffer BEFORE computing y (like Dexed)
-                            fb_bufs[op_idx][0] = fb_bufs[op_idx][1]
+                            fb_bufs[edge][0] = fb_bufs[edge][1]
 
                     # Compute operator output using sine lookup
                     phase = int(phases[op_idx])
@@ -959,9 +968,9 @@ class OperatorGraph:
                     gain = op_gains[op_idx]
                     y = (int(y) * int(gain)) >> 24
 
-                    # Store new value in feedback buffer
-                    if op_idx in fb_shifts:
-                        fb_bufs[op_idx][1] = y
+                    # Source writes to feedback buffer(s)
+                    for edge in fb_sources.get(op_idx, []):
+                        fb_bufs[edge][1] = y
 
                     outputs[op_idx] = y
 
@@ -1036,17 +1045,20 @@ class OperatorGraph:
         # Initialize state
         phases = np.zeros(self.num_ops, dtype=np.int64)
         outputs = np.zeros(self.num_ops, dtype=np.int64)
-        fb_bufs = [[0, 0] for _ in range(self.num_ops)]
-
-        # Compute feedback shifts
-        # Note: Dexed adds +2 to fb_shift for algorithms 4, 6, 32 (when normalize_feedback=false)
-        # For generic OperatorGraph, we use the standard formula without the +2 offset
+        # Feedback state: keyed by (source, target) edge
+        fb_bufs = {}
         fb_shifts = {}
-        for op_idx, level in self._feedback.items():
+        fb_sources: Dict[int, List[Tuple[int, int]]] = {}
+        fb_targets: Dict[int, List[Tuple[int, int]]] = {}
+        for (src, tgt), level in self._feedback.items():
+            edge = (src, tgt)
             if level > 0:
-                fb_shifts[op_idx] = FEEDBACK_BITDEPTH - level
+                fb_shifts[edge] = FEEDBACK_BITDEPTH - level
             else:
-                fb_shifts[op_idx] = 16  # Effectively disabled
+                fb_shifts[edge] = 16  # Effectively disabled
+            fb_bufs[edge] = [0, 0]
+            fb_sources.setdefault(src, []).append(edge)
+            fb_targets.setdefault(tgt, []).append(edge)
 
         order = self._compute_processing_order()
         all_outputs = np.zeros((self.num_ops + 1, num_samples), dtype=np.float64)
@@ -1094,25 +1106,24 @@ class OperatorGraph:
                             if weight != 0:
                                 mod_input += int(outputs[source_idx] * weight)
 
-                    # Check for feedback (matches Dexed's compute_fb order)
-                    if op_idx in fb_shifts:
-                        fb_shift = fb_shifts[op_idx]
+                    # Target reads from feedback buffer(s)
+                    for edge in fb_targets.get(op_idx, []):
+                        fb_shift = fb_shifts[edge]
                         if fb_shift < 16:
-                            y0 = fb_bufs[op_idx][0]
-                            y1 = fb_bufs[op_idx][1]
+                            y0 = fb_bufs[edge][0]
+                            y1 = fb_bufs[edge][1]
                             scaled_fb = (y0 + y1) >> (fb_shift + 1)
                             mod_input += scaled_fb
-                            # Shift buffer BEFORE computing y (like Dexed)
-                            fb_bufs[op_idx][0] = fb_bufs[op_idx][1]
+                            fb_bufs[edge][0] = fb_bufs[edge][1]
 
                     phase = int(phases[op_idx])
                     y = _sin_lookup(phase + mod_input)
                     gain = op_gains[op_idx]
                     y = (int(y) * int(gain)) >> 24
 
-                    # Store new value in feedback buffer
-                    if op_idx in fb_shifts:
-                        fb_bufs[op_idx][1] = y
+                    # Source writes to feedback buffer(s)
+                    for edge in fb_sources.get(op_idx, []):
+                        fb_bufs[edge][1] = y
 
                     outputs[op_idx] = y
                     phases[op_idx] = (phases[op_idx] + op_freqs[op_idx]) & 0xffffffff
@@ -1141,7 +1152,7 @@ class OperatorGraph:
         cls,
         mod_matrix: np.ndarray,
         carriers: List[int],
-        feedback: Optional[Dict[int, int]] = None
+        feedback: Optional[Dict[Tuple[int, int], int]] = None
     ) -> 'OperatorGraph':
         """
         Create an operator graph from a modulation matrix.
@@ -1149,7 +1160,7 @@ class OperatorGraph:
         Args:
             mod_matrix: NxN array where [i,j] = amount op j modulates op i
             carriers: List of carrier operator indices (0-indexed)
-            feedback: Optional dict of {op_index: level} for self-feedback (level 0-7)
+            feedback: Optional dict of {(source, target): level} for feedback (level 0-7)
 
         Returns:
             OperatorGraph instance
@@ -1163,8 +1174,8 @@ class OperatorGraph:
         graph.set_carriers(carriers)
 
         if feedback:
-            for op, level in feedback.items():
-                graph.set_feedback(op, level)
+            for (src, tgt), level in feedback.items():
+                graph.set_feedback(src, tgt, level)
 
         return graph
 
@@ -1185,9 +1196,9 @@ class OperatorGraph:
         graph = cls(num_ops=6)
         graph._mod_matrix = alg.mod_matrix.astype(np.float32)
         graph.set_carriers(alg.carriers)
-        # Note: feedback is NOT set automatically. Users should call
-        # graph.set_feedback(op, level) explicitly if they want feedback.
-        # The feedback_op info is available via algorithms[n].feedback_op
+        # Feedback is NOT set automatically. Users should call
+        # graph.set_feedback(src, tgt, level) explicitly if they want feedback.
+        # The edge info is available via algorithms[n].feedback_edge
 
         return graph
 

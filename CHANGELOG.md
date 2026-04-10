@@ -1,0 +1,26 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [0.2.0] - 2026-04-10
+
+### Changed
+
+- **Breaking:** `Algorithm.feedback_op` (int) replaced with `Algorithm.feedback_edge` (Tuple[int, int]) representing `(source, target)`. Most algorithms have `source == target` (self-feedback). Algorithms 3 and 5 (DX7 algos 4 and 6) now correctly represent cross-operator feedback.
+- **Breaking:** `get_feedback_op()` replaced with `get_feedback_edge()`.
+- **Breaking:** `OperatorGraph.set_feedback(op, level)` signature changed to `set_feedback(source, target, level)`.
+- **Breaking:** `OperatorGraph.get_feedback(op)` signature changed to `get_feedback(source, target)`.
+- **Breaking:** `OperatorGraph.from_matrix()` feedback parameter changed from `Dict[int, int]` to `Dict[Tuple[int, int], int]`.
+
+### Fixed
+
+- DX7 algorithm 4 (index 3) feedback is now correctly modeled as op 3 -> op 5 instead of a self-loop on op 5.
+- DX7 algorithm 6 (index 5) feedback is now correctly modeled as op 4 -> op 5 instead of a self-loop on op 5.
+- `OperatorGraph` render methods now correctly route cross-operator feedback: the source operator's output is written to the feedback buffer and the target operator reads from it.
+
+## [0.1.0] - 2026-03-06
+
+Initial release.
