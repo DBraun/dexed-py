@@ -33,4 +33,5 @@ pip install dexed-py
 quickstart
 api
 parameter-format
+changelog
 ```

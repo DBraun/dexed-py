@@ -108,20 +108,28 @@ class TestCarriersAndFeedback:
             graph.set_carriers([4])
 
     def test_set_feedback(self):
-        """Test setting feedback."""
+        """Test setting self-feedback."""
         graph = OperatorGraph(num_ops=4)
-        graph.set_feedback(3, level=7)
+        graph.set_feedback(3, 3, level=7)
 
-        # Feedback is stored internally as level (0-7)
-        assert graph._feedback.get(3) == 7
+        assert graph._feedback.get((3, 3)) == 7
 
     def test_remove_feedback(self):
         """Test removing feedback by setting level to 0."""
         graph = OperatorGraph(num_ops=4)
-        graph.set_feedback(3, level=7)
-        graph.set_feedback(3, level=0)
+        graph.set_feedback(3, 3, level=7)
+        graph.set_feedback(3, 3, level=0)
 
-        assert 3 not in graph._feedback
+        assert (3, 3) not in graph._feedback
+
+    def test_set_cross_operator_feedback(self):
+        """Test feedback from one operator to another."""
+        graph = OperatorGraph(num_ops=6)
+        graph.set_feedback(3, 5, level=5)
+
+        assert graph._feedback.get((3, 5)) == 5
+        assert graph.get_feedback(3, 5) == 5
+        assert graph.get_feedback(3, 3) == 0
 
 
 class TestGraphFromAlgorithm:
@@ -174,10 +182,10 @@ class TestGraphFromMatrix:
         """Test creating graph from matrix with feedback."""
         mod_matrix = np.zeros((4, 4), dtype=np.float32)
         graph = OperatorGraph.from_matrix(
-            mod_matrix, carriers=[0, 1], feedback={3: 6}
+            mod_matrix, carriers=[0, 1], feedback={(3, 3): 6}
         )
 
-        assert graph._feedback.get(3) == 6
+        assert graph._feedback.get((3, 3)) == 6
 
     def test_from_matrix_invalid(self):
         """Test that invalid matrices raise errors."""
@@ -259,7 +267,7 @@ class TestSevenOperators:
             graph.connect(i + 1, i)
 
         graph.set_carriers([0])
-        graph.set_feedback(6, level=5)
+        graph.set_feedback(6, 6, level=5)
 
         audio = graph.render(
             sample_rate=44100,
@@ -312,7 +320,7 @@ class TestMethodChaining:
                  .connect(2, 1)
                  .connect(1, 0)
                  .set_carriers([0])
-                 .set_feedback(3, level=5))
+                 .set_feedback(3, 3, level=5))
 
         assert isinstance(graph, OperatorGraph)
         assert graph.carriers == [0]
@@ -441,11 +449,11 @@ class TestQueryMethods:
     def test_get_feedback(self):
         """Test get_feedback retrieval."""
         graph = OperatorGraph(num_ops=4)
-        graph.set_feedback(3, level=5)
+        graph.set_feedback(3, 3, level=5)
 
-        assert graph.get_feedback(3) == 5
-        assert graph.get_feedback(2) == 0
-        assert graph.get_feedback(0) == 0
+        assert graph.get_feedback(3, 3) == 5
+        assert graph.get_feedback(2, 2) == 0
+        assert graph.get_feedback(0, 0) == 0
 
     def test_disconnect_all(self):
         """Test disconnect_all removes all connections."""
@@ -476,7 +484,7 @@ class TestVisualization:
         graph.connect(2, 1)
         graph.connect(1, 0)
         graph.set_carriers([0])
-        graph.set_feedback(3, level=5)
+        graph.set_feedback(3, 3, level=5)
 
         summary = graph.summary()
         assert "OperatorGraph (4 operators)" in summary
@@ -500,7 +508,7 @@ class TestVisualization:
         graph.connect(2, 1)
         graph.connect(1, 0)
         graph.set_carriers([0])
-        graph.set_feedback(2, level=7)
+        graph.set_feedback(2, 2, level=7)
 
         mermaid = graph.to_mermaid()
         assert "flowchart TB" in mermaid
@@ -525,7 +533,7 @@ class TestVisualization:
         graph.connect(2, 1)
         graph.connect(1, 0)
         graph.set_carriers([0])
-        graph.set_feedback(2, level=5)
+        graph.set_feedback(2, 2, level=5)
 
         ascii_art = graph.to_ascii()
         assert "OperatorGraph (3 operators)" in ascii_art
@@ -652,7 +660,7 @@ class TestSpectralComparison:
             graph.op[i].envelope.rates = [99, 99, 99, 99]
             graph.op[i].envelope.levels = [99, 99, 99, 0]
         graph.op[5].output_level = 99
-        graph.set_feedback(5, level=7)
+        graph.set_feedback(5, 5, level=7)
 
         py_audio = graph.render(sample_rate=44100, midi_note=60, velocity=100,
                                 note_duration=0.5, render_duration=0.5)
@@ -712,7 +720,7 @@ class TestSpectralComparison:
             graph_fb.op[i].envelope.rates = [99, 99, 99, 99]
             graph_fb.op[i].envelope.levels = [99, 99, 99, 0]
         graph_fb.op[5].output_level = 99
-        graph_fb.set_feedback(5, level=7)
+        graph_fb.set_feedback(5, 5, level=7)
 
         py_fb = graph_fb.render(sample_rate=44100, midi_note=60, velocity=100,
                                  note_duration=0.5, render_duration=0.5)
