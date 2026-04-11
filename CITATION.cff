@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "dexed-py"
+type: software
+authors:
+  - family-names: Braun
+    given-names: David
+    email: braun@ccrma.stanford.edu
+    orcid: "https://orcid.org/0000-0001-8866-0756"
+version: "0.2.0"
+date-released: "2026-04-10"
+license: GPL-3.0
+url: "https://github.com/DBraun/dexed-py"
+repository-code: "https://github.com/DBraun/dexed-py"
+keywords:
+  - audio
+  - music
+  - synthesizer
+  - dx7
+  - fm-synthesis
+  - python
+  - jax

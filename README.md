@@ -1,10 +1,8 @@
 # dexed-py
 
-Python bindings for the [Dexed](https://github.com/asb2m10/dexed) DX7 synthesizer, with support for high-level patch editing, ML/JAX workflows, and low-level parameter arrays.
+Python bindings for the [Dexed](https://github.com/asb2m10/dexed) DX7 synthesizer. Supports high-level patch editing, sysex import/export, and low-level parameter arrays.
 
-The Yamaha DX7 (1983) is the best-selling hardware synthesizer of all time. Its 6-operator FM synthesis engine produces a huge range of sounds — from electric pianos and basses to bells, pads, and metallic textures. **dexed-py** wraps the open-source [Dexed](https://github.com/asb2m10/dexed) engine so you can program, render, and manipulate DX7 patches entirely from Python.
-
-[Dexed](https://github.com/asb2m10/dexed) is licensed under the GPL v3. The msfa component (acronym for music synthesizer for android, see `src/msfa`) stays on the Apache 2.0 license to be able to collaborate between projects.
+[Dexed](https://github.com/asb2m10/dexed) is licensed under the GPL v3. The [msfa](https://github.com/google/music-synthesizer-for-android) component (`src/msfa`) is Apache 2.0 licensed.
 
 ## Requirements
 
@@ -88,6 +86,8 @@ presets = [Preset.from_array(row) for row in np.load("bank.npy")]
 ```
 
 ### JAX pure_callback
+
+The synth can be called non-differentiably from JIT-compiled JAX code via `jax.pure_callback`.
 
 ```python
 import jax
