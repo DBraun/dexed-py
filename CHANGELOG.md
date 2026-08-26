@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-08-25
+
+### Fixed
+
+- DX7 algorithm 18 (index 17) feedback is now correctly reported as a self-loop on op 2 instead of op 5.
+- DX7 algorithm 21 (index 20) feedback is now correctly reported as a self-loop on op 2 instead of op 5.
+
+  In both algorithms the feedback bits sit in the slot for DX7 operator 3 in
+  `FmCore::algorithms[32]` (`src/msfa/fm_core.cc`), not operator 6. All 32
+  entries in `_ALGORITHM_DATA` now agree with that table on carriers,
+  modulators, modulation edges, and feedback edges.
+
 ## [0.2.0] - 2026-04-10
 
 ### Changed
