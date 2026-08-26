@@ -132,7 +132,9 @@ def render_from_flat(flat_params):   # (145,) float32
 ### Algorithm Metadata
 
 ```python
-from dexed import algorithms, get_carriers, get_modulators, get_mod_matrix
+from dexed import (
+    algorithms, get_carriers, get_modulators, get_mod_matrix, get_feedback_edge,
+)
 
 alg = algorithms[15]
 print(f"carriers: {alg.carriers}")
@@ -141,6 +143,24 @@ print(f"modulation matrix:\n{alg.mod_matrix}")   # 6x6 int8
 
 get_carriers(31)   # [0, 1, 2, 3, 4, 5] — all parallel
 ```
+
+`feedback_edge` is a `(source, target)` pair of operator indices. Most algorithms
+feed an operator back into itself, so `source == target`:
+
+```python
+get_feedback_edge(0)    # (5, 5) — DX7 algorithm 1, op 6 into itself
+get_feedback_edge(17)   # (2, 2) — DX7 algorithm 18, op 3 into itself
+```
+
+Two algorithms are different: their feedback wraps a whole chain rather than a
+single operator, so the pair has two distinct operators.
+
+```python
+get_feedback_edge(3)    # (3, 5) — DX7 algorithm 4, op 4 back into op 6
+get_feedback_edge(5)    # (4, 5) — DX7 algorithm 6, op 5 back into op 6
+```
+
+All indices are 0-based, so operator index `i` is DX7 operator `i + 1`.
 
 ### Individual Operator Outputs
 
@@ -180,7 +200,7 @@ audio = graph.render(sample_rate=44100, midi_note=60, velocity=100,
 import numpy as np
 mod_matrix = np.zeros((4, 4), dtype=np.float32)
 mod_matrix[0, 1] = 1.0  # Op 1 modulates Op 0
-graph = OperatorGraph.from_matrix(mod_matrix, carriers=[0], feedback={3: 0.5})
+graph = OperatorGraph.from_matrix(mod_matrix, carriers=[0], feedback={(3, 3): 5})
 
 # From a standard DX7 algorithm (0-indexed)
 graph = OperatorGraph.from_algorithm(15)
@@ -310,7 +330,8 @@ graph.connect(source, target, amount=1.0)
 graph.disconnect(source, target)
 graph.disconnect_all()
 graph.set_carriers([0, 2])
-graph.set_feedback(op, level=7)    # 0 disables, 1-7
+graph.set_feedback(source, target, level=7)   # 0 disables, 1-7
+                                              # source == target for a self-loop
 
 # Query API
 graph.mod_matrix       # NxN float32 (read-only copy)
@@ -342,4 +363,30 @@ git clone --recursive https://github.com/DBraun/dexed-py.git
 cd dexed-py
 pip install -e .
 python -m pytest -v tests
+```
+
+### Editing the Python sources
+
+The `.py` files are installed by CMake (`install.components = ["python_modules"]`),
+so a plain `pip install -e .` copies them into the environment instead of linking
+them. Imports keep resolving to that copy — edit `dexed/algorithms.py` and your
+tests go on exercising the version from install time. Ask for a rebuild on import
+to get a live checkout:
+
+```bash
+pip install scikit-build-core nanobind
+pip install -e . --no-build-isolation \
+  --config-settings=editable.rebuild=true \
+  --config-settings=editable.verbose=false \
+  --config-settings=build-dir="build/{wheel_tag}"
+```
+
+Now both Python and C++ edits take effect on the next import. `build-dir` is
+required by rebuild mode and is already covered by `.gitignore`;
+`editable.verbose=false` keeps CMake from printing on every import.
+
+To confirm you have a live checkout rather than a copy:
+
+```bash
+python -c "import dexed; print(dexed.__version__)"   # edit dexed/version.py, rerun
 ```

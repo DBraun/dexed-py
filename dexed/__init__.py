@@ -14,7 +14,13 @@ except ImportError as e:
 from .patch import Patch
 from .preset import Preset
 from .synth import DexedSynth
-from .algorithms import algorithms, get_carriers, get_modulators, get_mod_matrix
+from .algorithms import (
+    algorithms,
+    get_carriers,
+    get_modulators,
+    get_mod_matrix,
+    get_feedback_edge,
+)
 from .graph import OperatorGraph, GraphOperator, GraphEnvelope
 
 __all__ = [
@@ -28,4 +34,5 @@ __all__ = [
     "get_carriers",
     "get_modulators",
     "get_mod_matrix",
+    "get_feedback_edge",
 ]

@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.2.1] - 2026-08-25
+## [0.2.1] - 2026-08-26
+
+### Added
+
+- `get_feedback_edge()` is now exported from the top-level `dexed` namespace, alongside `get_carriers()`, `get_modulators()` and `get_mod_matrix()`.
 
 ### Fixed
 
