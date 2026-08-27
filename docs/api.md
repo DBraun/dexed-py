@@ -70,7 +70,7 @@
 
 ```{eval-rst}
 .. autoclass:: dexed.algorithms.Algorithm
-   :members:
+   :no-members:
 ```
 
 ```{eval-rst}
