@@ -192,6 +192,94 @@ class TestOperator:
         assert peak_hz == pytest.approx(patch.op[0].frequency_ratio, abs=2 * bin_width)
 
 
+class TestBankIO:
+    """Tests for reading and writing 32-voice bank files."""
+
+    def test_save_to_bank_is_callable_on_the_class(self, tmp_path):
+        """The documented call is Patch.save_to_bank(filename, patches).
+
+        It used to be an instance method, so the documented form bound self to
+        the filename and raised AttributeError without writing anything.
+        """
+        patches = [Patch(name=f"VOICE{i:02d}") for i in range(32)]
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), patches)
+        assert path.exists()
+
+    def test_bank_round_trip_preserves_every_voice(self, tmp_path):
+        patches = []
+        for i in range(32):
+            patch = Patch(name=f"VOICE{i:02d}")
+            patch.algorithm = i
+            patch.feedback = i % 8
+            patches.append(patch)
+
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), patches)
+        loaded = Patch.load_bank(str(path))
+
+        assert len(loaded) == 32
+        for original, restored in zip(patches, loaded):
+            assert restored.name.strip() == original.name.strip()
+            assert restored.algorithm == original.algorithm
+            assert restored.feedback == original.feedback
+
+    def test_wrong_patch_count_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="exactly 32"):
+            Patch.save_to_bank(str(tmp_path / "bank.syx"), [Patch()])
+
+    def test_saved_bank_is_a_real_bulk_dump(self, tmp_path):
+        """A .syx file has to be sendable to a DX7, not a bare payload."""
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), [Patch() for _ in range(32)])
+
+        data = path.read_bytes()
+        assert len(data) == 4104
+        assert data[:6] == bytes([0xF0, 0x43, 0x00, 0x09, 0x20, 0x00])
+        assert data[4103] == 0xF7
+        assert data[4102] == (-sum(data[6:4102])) & 0x7F
+
+    def test_raw_4096_byte_payload_still_loads(self, tmp_path):
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), [Patch(name=f"V{i:02d}") for i in range(32)])
+        raw = tmp_path / "raw.bin"
+        raw.write_bytes(path.read_bytes()[6:4102])
+        assert Patch.load_bank(str(raw))[3].name.strip() == "V03"
+
+    def test_bank_preceded_by_another_sysex_message_is_found(self, tmp_path):
+        """A bank used to be sliced blindly at [6:4102] and decoded as garbage."""
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), [Patch(name=f"V{i:02d}") for i in range(32)])
+        prefixed = tmp_path / "prefixed.syx"
+        inquiry = bytes([0xF0, 0x7E, 0x00, 0x06, 0x02, 0xF7])
+        prefixed.write_bytes(inquiry + path.read_bytes())
+
+        assert Patch.load_bank(str(prefixed))[3].name.strip() == "V03"
+
+    def test_bad_checksum_warns_but_still_loads(self, tmp_path):
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), [Patch(name="VOICE") for _ in range(32)])
+        data = bytearray(path.read_bytes())
+        data[4102] ^= 0x7F
+        path.write_bytes(bytes(data))
+
+        with pytest.warns(UserWarning, match="checksum mismatch"):
+            patches = Patch.load_bank(str(path))
+        assert patches[0].name.strip() == "VOICE"
+
+    def test_empty_file_is_rejected(self, tmp_path):
+        path = tmp_path / "empty.syx"
+        path.write_bytes(b"")
+        with pytest.raises(ValueError, match="empty"):
+            Patch.load_bank(str(path))
+
+    def test_unrelated_sysex_is_rejected(self, tmp_path):
+        path = tmp_path / "junk.syx"
+        path.write_bytes(bytes([0xF0]) + bytes(5000))
+        with pytest.raises(ValueError, match="No 32-voice DX7 bulk dump"):
+            Patch.load_bank(str(path))
+
+
 class TestSysexConversion:
     """Tests for sysex format conversion."""
 

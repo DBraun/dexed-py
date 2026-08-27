@@ -8,7 +8,13 @@ to/from various formats (sysex, packed, normalized arrays).
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Union, Optional
+import warnings
+
 import numpy as np
+
+# 32-voice bulk dump: F0 43 00 09 20 00, 4096 payload bytes, checksum, F7
+BANK_SYSEX_HEADER = bytes([0xF0, 0x43, 0x00, 0x09, 0x20, 0x00])
+BANK_SYSEX_SIZE = 4104
 
 # Curve names to indices
 CURVE_NAMES = {
@@ -459,39 +465,91 @@ class Patch:
         """
         Load a DX7 bank file (32 voices).
 
-        Supports both raw 4096-byte dumps and standard sysex format.
+        Accepts a standard 4104-byte bulk dump (``F0 43 00 09 20 00`` ... payload
+        ... checksum ``F7``) or a raw 4096-byte payload with no framing. A bulk
+        dump may be preceded by other sysex messages; they are skipped.
+
+        Warns if the dump's checksum does not match, and loads it anyway --
+        cartridge rips often carry a stale checksum.
         """
         with open(filename, "rb") as f:
             data = f.read()
 
-        # Check for sysex header
+        if not data:
+            raise ValueError(f"Bank file is empty: {filename}")
+
         if data[0] == 0xF0:
-            # Standard sysex format: F0 43 00 09 20 00 ... F7
-            if len(data) >= 4104:  # 4096 + 8 byte header/footer
-                data = data[6:6 + 4096]  # Skip header
-            else:
-                raise ValueError(f"Invalid sysex bank file size: {len(data)}")
+            payload = cls._find_bank_message(data, filename)
         elif len(data) < 4096:
             raise ValueError(f"Bank data must be at least 4096 bytes, got {len(data)}")
+        else:
+            payload = data[:4096]
 
         patches = []
         for i in range(32):
-            packed = data[i * 128:(i + 1) * 128]
+            packed = payload[i * 128:(i + 1) * 128]
             patches.append(cls.from_packed(packed))
 
         return patches
 
-    def save_to_bank(self, filename: str, patches: List["Patch"] = None):
-        """Save patches to a bank file. If patches is None, saves just this patch as slot 0."""
-        if patches is None:
-            patches = [self] + [Patch() for _ in range(31)]
+    @staticmethod
+    def _sysex_checksum(payload: bytes) -> int:
+        """DX7 sysex checksum: the low 7 bits of the two's complement sum."""
+        return (-sum(payload)) & 0x7F
 
+    @classmethod
+    def _find_bank_message(cls, data: bytes, filename: str) -> bytes:
+        """Return the 4096-byte payload of the first 32-voice dump in `data`.
+
+        Walks message by message rather than assuming the dump starts at byte
+        zero -- a bank preceded by, say, a device-inquiry reply used to be
+        sliced blindly at [6:4102] and decoded into 32 byte-shifted voices.
+        """
+        pos = 0
+        while pos < len(data) and data[pos] == 0xF0:
+            end = data.find(0xF7, pos)
+            if end == -1:
+                break
+            if end - pos == BANK_SYSEX_SIZE - 1:
+                payload = data[pos + 6:pos + 6 + 4096]
+                expected = data[pos + 4102]
+                actual = cls._sysex_checksum(payload)
+                if actual != expected:
+                    warnings.warn(
+                        f"Bank checksum mismatch in {filename}: "
+                        f"expected 0x{expected:02X}, computed 0x{actual:02X}. "
+                        f"Loading anyway.",
+                        stacklevel=3,
+                    )
+                return payload
+            pos = end + 1
+
+        raise ValueError(
+            f"No 32-voice DX7 bulk dump found in {filename}: expected a "
+            f"{BANK_SYSEX_SIZE}-byte sysex message, got {len(data)} bytes"
+        )
+
+    @classmethod
+    def save_to_bank(cls, filename: str, patches: List["Patch"]):
+        """Save 32 patches to a bank file.
+
+        Mirrors :meth:`load_bank`, so it is called on the class::
+
+            Patch.save_to_bank("my_bank.syx", patches)
+        """
         if len(patches) != 32:
-            raise ValueError("Bank must contain exactly 32 patches")
+            raise ValueError(
+                f"Bank must contain exactly 32 patches, got {len(patches)}"
+            )
 
-        data = bytearray()
+        payload = bytearray()
         for patch in patches:
-            data.extend(patch.to_packed())
+            payload.extend(patch.to_packed())
+
+        data = bytearray(BANK_SYSEX_HEADER)
+        data.extend(payload)
+        data.append(cls._sysex_checksum(payload))
+        data.append(0xF7)
 
         with open(filename, "wb") as f:
             f.write(data)

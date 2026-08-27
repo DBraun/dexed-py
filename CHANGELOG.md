@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `Patch.save_to_bank()` is a classmethod, matching its sibling
+  `Patch.load_bank()` and the form every doc example already used:
+  `Patch.save_to_bank("bank.syx", patches)`. It was an instance method, so the
+  documented call bound `self` to the filename and raised `AttributeError`
+  without writing a file. `patches` is now required; the undocumented
+  `patch.save_to_bank(filename)` form, which padded slots 1-31 with empty
+  voices, is gone.
+- `Patch.save_to_bank()` writes a complete 4104-byte bulk dump -- sysex header,
+  4096-byte payload, checksum and `F7` -- instead of the bare 4096-byte payload
+  it used to emit under a `.syx` name. Round-tripping a real dump through
+  dexed-py no longer strips its MIDI framing.
+- `Patch.load_bank()` locates the bulk dump inside the file instead of assuming
+  it starts at byte zero, so a bank preceded by another sysex message no longer
+  decodes into 32 byte-shifted voices. It verifies the checksum and warns on a
+  mismatch, rejects a file with no 32-voice dump in it, and raises `ValueError`
+  rather than `IndexError` on an empty file.
+
 ### Fixed
 
 - Sharing a `DexedSynth` between threads no longer crashes the interpreter.
