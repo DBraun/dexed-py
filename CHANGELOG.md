@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Sharing a `DexedSynth` between threads no longer crashes the interpreter.
+  Loading and rendering are now serialized per instance.
+- Creating a second `DexedSynth` at a different sample rate no longer retunes
+  every synth already alive. The shared DX7 frequency, envelope and LFO tables
+  are re-pointed at the rendering synth's own sample rate; rendering two
+  different sample rates concurrently now raises instead of returning
+  quietly detuned audio.
+
 ## [0.2.1] - 2026-08-26
 
 ### Added

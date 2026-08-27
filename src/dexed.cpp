@@ -42,6 +42,49 @@ static std::unique_lock<std::mutex> lock_without_gil(std::mutex &m) {
     return lock;
 }
 
+// Freqlut, Env, PitchEnv and Lfo keep process-wide lookup tables built for one
+// sample rate. Whichever synth initialized them last owns them, so without this
+// bookkeeping a synth created at a second sample rate silently retunes every
+// synth already alive -- by a semitone and a half between 44.1k and 48k.
+//
+// Renders re-point the tables at their own sample rate and hold a claim on them
+// until they finish. Concurrent renders at one rate share the tables freely;
+// concurrent renders at *different* rates cannot both be right, so the second
+// one raises rather than returning quietly detuned audio.
+static std::mutex g_table_mutex;
+static double g_table_sample_rate = 0.0;
+static int g_table_claims = 0;
+
+class GlobalTableClaim {
+public:
+    explicit GlobalTableClaim(double sample_rate) {
+        std::lock_guard<std::mutex> guard(g_table_mutex);
+        if (g_table_sample_rate != sample_rate) {
+            if (g_table_claims > 0) {
+                throw std::runtime_error(
+                    "Cannot render at two different sample rates at the same "
+                    "time: the DX7 frequency, envelope and LFO tables are "
+                    "shared process-wide. Render sequentially, or use one "
+                    "sample rate per process.");
+            }
+            Freqlut::init(sample_rate);
+            Env::init_sr(sample_rate);
+            PitchEnv::init(sample_rate);
+            Lfo::init(sample_rate);
+            g_table_sample_rate = sample_rate;
+        }
+        g_table_claims++;
+    }
+
+    ~GlobalTableClaim() {
+        std::lock_guard<std::mutex> guard(g_table_mutex);
+        g_table_claims--;
+    }
+
+    GlobalTableClaim(const GlobalTableClaim &) = delete;
+    GlobalTableClaim &operator=(const GlobalTableClaim &) = delete;
+};
+
 // EngineMkI envelope constants (defined in EngineMkI.cpp, mirrored here)
 static const uint16_t ENV_BITDEPTH = 14;
 static const uint16_t ENV_MAX = 1 << ENV_BITDEPTH;
@@ -384,14 +427,11 @@ public:
     void ensure_initialized() {
         if (initialized) return;
         
-        // Initialize core modules with the instance's sample rate
-        Freqlut::init(sample_rate);
+        // Rate-independent tables; the rate-dependent ones are claimed per
+        // render by GlobalTableClaim.
         Exp2::init();
         Sin::init();
-        Env::init_sr(sample_rate);
-        PitchEnv::init(sample_rate);
-        Lfo::init(sample_rate);
-        
+
         // Setup tuning
         tuning = std::make_shared<StdTuning>();
         
@@ -438,6 +478,9 @@ public:
         if (!params_loaded) {
             throw std::runtime_error("Parameters must be loaded before rendering. Call load_params() first.");
         }
+
+        // Point the shared DX7 tables at this synth's sample rate.
+        GlobalTableClaim tables(sample_rate);
 
         // Create fresh LFO and voice objects to ensure complete state reset
         lfo = std::make_unique<Lfo>();
@@ -527,6 +570,9 @@ public:
         if (!params_loaded) {
             throw std::runtime_error("Parameters must be loaded before rendering. Call load_params() first.");
         }
+
+        // Point the shared DX7 tables at this synth's sample rate.
+        GlobalTableClaim tables(sample_rate);
 
         // Create fresh LFO and voice objects to ensure complete state reset
         lfo = std::make_unique<Lfo>();
