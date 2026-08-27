@@ -522,18 +522,30 @@ class OperatorGraph:
             source: Source operator index (0-indexed) whose output is fed back
             target: Target operator index (0-indexed) that receives feedback.
                 Same as source for self-feedback.
-            level: Feedback level 0-7 (0 disables, 7 is maximum)
+            level: Feedback level 0-7 (0 disables, 7 is maximum). Must be an
+                integer -- the render loop uses it as a bit shift.
 
         Returns:
             self for method chaining
+
+        Raises:
+            ValueError: if an operator index or the level is out of range.
+            TypeError: if level is not an integer.
         """
         if not 0 <= source < self.num_ops:
             raise ValueError(f"Source operator must be 0-{self.num_ops - 1}, got {source}")
         if not 0 <= target < self.num_ops:
             raise ValueError(f"Target operator must be 0-{self.num_ops - 1}, got {target}")
+        if isinstance(level, bool) or not isinstance(level, (int, np.integer)):
+            raise TypeError(
+                f"Feedback level must be an integer 0-7, got {level!r}"
+            )
+        if not 0 <= level <= 7:
+            raise ValueError(f"Feedback level must be 0-7, got {level}")
+
         edge = (source, target)
         if level > 0:
-            self._feedback[edge] = min(7, max(0, level))
+            self._feedback[edge] = int(level)
         elif edge in self._feedback:
             del self._feedback[edge]
         return self
@@ -770,7 +782,16 @@ class OperatorGraph:
         return chain
 
     def _compute_processing_order(self) -> List[int]:
-        """Compute operator processing order via topological sort."""
+        """Compute operator processing order via topological sort.
+
+        Raises:
+            ValueError: if the modulation matrix contains a cycle. A cycle has
+                no valid order -- whichever operator is computed first reads the
+                other's previous sample -- so it used to fall back to bare index
+                order, which also delayed edges that were in no cycle at all.
+                Feedback is the supported way to close a loop; it has explicit
+                one-sample-delay semantics and a 0-7 level.
+        """
         dependencies: Dict[int, Set[int]] = {i: set() for i in range(self.num_ops)}
 
         for target in range(self.num_ops):
@@ -792,7 +813,12 @@ class OperatorGraph:
                         queue.append(target)
 
         remaining = [i for i in range(self.num_ops) if i not in order]
-        order.extend(remaining)
+        if remaining:
+            raise ValueError(
+                f"Modulation matrix has a cycle: operators {remaining} cannot "
+                f"be ordered. Use set_feedback(source, target, level) to close "
+                f"a loop."
+            )
 
         return order
 

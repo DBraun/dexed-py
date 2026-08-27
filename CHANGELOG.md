@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   returned list corrupted the algorithm table for the rest of the process.
   Comparisons like `algorithms[31].carriers == [0, 1, 2, 3, 4, 5]` need to
   compare against a tuple now; `get_carriers(31)` still returns a list.
+- `OperatorGraph.render()` and `render_all_ops()` raise on a cyclic modulation
+  matrix instead of falling back to bare index order. The fallback decided where
+  the one-sample delay landed by operator numbering, and delayed edges that were
+  in no cycle at all, so relabelling an equivalent graph changed the audio. Use
+  `set_feedback()` to close a loop -- it has explicit delay semantics.
+- `OperatorGraph.set_feedback()` validates `level`. A float was stored verbatim
+  and then raised `TypeError: unsupported operand type(s) for >>` from inside
+  the render loop; `level=99` was silently clamped to 7 and `level=-2` silently
+  recorded nothing. Out-of-range values now raise, and a non-integer level
+  raises `TypeError` at the call.
 
 ### Fixed
 

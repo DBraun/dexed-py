@@ -161,6 +161,101 @@ class TestGraphFromAlgorithm:
             assert set(graph.carriers) == set(alg.carriers)
 
 
+class TestFeedbackLevelValidation:
+    """set_feedback validated its operators but not its level."""
+
+    def test_float_level_is_rejected(self):
+        """0.5 used to be stored and then blow up inside the render loop.
+
+        The traceback pointed at `'int' >> 'float'` in graph.py rather than at
+        the bad argument.
+        """
+        graph = OperatorGraph(num_ops=3)
+        with pytest.raises(TypeError, match="must be an integer"):
+            graph.set_feedback(0, 0, level=0.5)
+
+    def test_numpy_float_is_rejected_too(self):
+        """A level read out of a numpy array used to fail intermittently."""
+        graph = OperatorGraph(num_ops=3)
+        with pytest.raises(TypeError):
+            graph.set_feedback(0, 0, level=np.float64(3.0))
+
+    def test_numpy_integer_is_accepted(self):
+        graph = OperatorGraph(num_ops=3)
+        graph.set_feedback(0, 0, level=np.int64(3))
+        assert graph.get_feedback(0, 0) == 3
+
+    @pytest.mark.parametrize("level", [-2, 8, 99])
+    def test_out_of_range_level_is_rejected(self, level):
+        """99 used to be clamped to 7 and -2 recorded nothing, both silently."""
+        graph = OperatorGraph(num_ops=3)
+        with pytest.raises(ValueError, match="must be 0-7"):
+            graph.set_feedback(0, 0, level=level)
+
+    def test_level_zero_removes_the_edge(self):
+        graph = OperatorGraph(num_ops=3)
+        graph.set_feedback(0, 0, level=7)
+        graph.set_feedback(0, 0, level=0)
+        assert graph.get_feedback(0, 0) == 0
+
+    def test_from_matrix_rejects_a_float_level(self):
+        matrix = np.zeros((4, 4), dtype=np.float32)
+        matrix[0, 1] = 1.0
+        with pytest.raises(TypeError):
+            OperatorGraph.from_matrix(matrix, carriers=[0], feedback={(3, 3): 0.5})
+
+
+class TestCyclesAreRejected:
+    """A cycle in the modulation matrix has no valid processing order."""
+
+    @staticmethod
+    def _render(graph):
+        return graph.render(
+            sample_rate=44100, midi_note=60, velocity=100,
+            note_duration=0.05, render_duration=0.1,
+        )
+
+    def test_two_operator_cycle_raises(self):
+        graph = OperatorGraph(num_ops=2)
+        graph.connect(0, 1)
+        graph.connect(1, 0)
+        graph.set_carriers([0])
+        with pytest.raises(ValueError, match="cycle"):
+            self._render(graph)
+
+    def test_cycle_message_names_the_unorderable_operators(self):
+        """op0 reads op2, which is in the cycle, so it cannot be ordered either."""
+        graph = OperatorGraph(num_ops=3)
+        graph.connect(1, 2)
+        graph.connect(2, 1)
+        graph.connect(2, 0)
+        graph.set_carriers([0])
+        with pytest.raises(ValueError, match=r"operators \[0, 1, 2\]"):
+            self._render(graph)
+
+    def test_render_all_ops_rejects_a_cycle_too(self):
+        graph = OperatorGraph(num_ops=2)
+        graph.connect(0, 1)
+        graph.connect(1, 0)
+        graph.set_carriers([0])
+        with pytest.raises(ValueError, match="cycle"):
+            graph.render_all_ops(
+                sample_rate=44100, midi_note=60, velocity=100,
+                note_duration=0.05, render_duration=0.1,
+            )
+
+    def test_a_loop_closed_with_feedback_still_renders(self):
+        graph = OperatorGraph(num_ops=2)
+        for i in range(2):
+            graph.op[i].output_level = 99
+            graph.op[i].envelope.rates = [99, 99, 99, 99]
+            graph.op[i].envelope.levels = [99, 99, 99, 0]
+        graph.connect(1, 0)
+        graph.set_carriers([0])
+        graph.set_feedback(0, 1, level=7)
+        assert np.any(self._render(graph))
+
+
 class TestSelfModulationIsRejected:
     """connect(i, i) was stored, reported everywhere, and silently ignored."""
 
