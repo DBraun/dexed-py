@@ -6,8 +6,11 @@ routing table the C++ core actually renders. Nothing used to check the two
 against each other, which is how algorithms 18 and 21 came to claim feedback on
 operator 6 when the engine puts it on operator 3.
 
-Two independent checks here: the table is compared against the C++ source it was
-copied from, and against the behaviour of the compiled engine.
+Two independent checks here. The first decodes FmCore::algorithms[32] out of the
+C++ source and compares it field by field. The second renders audio and watches
+where the feedback control goes inert; it builds its prediction from
+dexed/algorithms.py alone, so a mistake in the decoder cannot excuse a mistake
+in the table.
 """
 
 import re
@@ -72,9 +75,15 @@ def _decode_cpp_table():
     return table
 
 
-requires_source = pytest.mark.skipif(
-    not FM_CORE.exists(), reason="C++ sources not available (installed package)"
-)
+def test_cpp_source_is_present():
+    """The comparison tests are worthless if the source silently goes missing.
+
+    tests/ ships only in a checkout or an sdist, and MANIFEST.in puts src/*.cc
+    in the sdist, so a missing fm_core.cc means a broken tree -- not a mode this
+    suite is expected to run in. Failing here beats skipping 128 tests and
+    reporting green.
+    """
+    assert FM_CORE.exists(), f"vendored engine source not found at {FM_CORE}"
 
 
 @pytest.fixture(scope="module")
@@ -82,7 +91,6 @@ def cpp_table():
     return _decode_cpp_table()
 
 
-@requires_source
 @pytest.mark.parametrize("alg", range(32))
 def test_carriers_match_cpp(cpp_table, alg):
     """Carriers agree with the operators the C++ table writes to the output."""
@@ -90,7 +98,6 @@ def test_carriers_match_cpp(cpp_table, alg):
     assert sorted(c + 1 for c in algorithms[alg].carriers) == expected
 
 
-@requires_source
 @pytest.mark.parametrize("alg", range(32))
 def test_mod_matrix_matches_cpp(cpp_table, alg):
     """Modulation edges agree with the buses the C++ table routes between."""
@@ -101,7 +108,6 @@ def test_mod_matrix_matches_cpp(cpp_table, alg):
     assert edges == cpp_table[alg]["edges"]
 
 
-@requires_source
 @pytest.mark.parametrize("alg", range(32))
 def test_feedback_edge_matches_cpp(cpp_table, alg):
     """Feedback edge agrees with the operators carrying the C++ feedback bits."""
@@ -155,34 +161,68 @@ def _render(alg, feedback, mute):
                         note_duration=0.15, render_duration=0.15)
 
 
-def _reaches_output(entry, start, without):
+def _table_edges(alg):
+    """Modulation edges of `alg` as (source, target), from the Python table."""
+    matrix = algorithms[alg].mod_matrix
+    return [(j, i) for i in range(6) for j in range(6) if matrix[i][j]]
+
+
+def _reaches_output(alg, start, without):
     """Can `start`'s signal still reach a carrier with operator `without` muted?"""
     if start == without:
         return False
+    carriers = set(algorithms[alg].carriers)
+    edges = _table_edges(alg)
     seen, stack = {start}, [start]
     while stack:
         node = stack.pop()
-        if node in entry["carriers"]:
+        if node in carriers:
             return True
-        for mod, car in entry["edges"]:
+        for mod, car in edges:
             if mod == node and car != without and car not in seen:
                 seen.add(car)
                 stack.append(car)
     return False
 
 
-@requires_source
+def _collapsed_chain_interior(alg, src, tgt):
+    """Operators inside a collapsed feedback chain, excluding both ends.
+
+    EngineMkI fuses the multi-operator feedback loops of DX7 algorithms 4 and 6
+    into a single sample loop (compute_fb3 / compute_fb2) and applies no level
+    threshold to the operators inside it, unlike the normal render path. Muting
+    one of those therefore does not stop feedback the way the routing graph says
+    it should -- it leaves a residue around -23 dB -- so the reachability model
+    cannot classify it either way and it is left out.
+
+    Only algorithm 4 has an interior; algorithm 6's chain is two operators long.
+    """
+    if src == tgt:
+        return set()
+    edges = _table_edges(alg)
+    stack = [(tgt, [tgt])]
+    while stack:
+        node, path = stack.pop()
+        if node == src:
+            return set(path[1:-1])
+        for mod, car in edges:
+            if mod == node and car not in path:
+                stack.append((car, path + [car]))
+    return set()
+
+
 @pytest.mark.parametrize("alg", range(32))
-def test_feedback_edge_matches_engine_behaviour(cpp_table, alg):
+def test_feedback_edge_matches_engine_behaviour(alg):
     """The engine's feedback control goes inert exactly where the table predicts.
 
     Muting one operator at a time, the feedback amount stops affecting the audio
     precisely when the mute silences the feedback source or cuts every path from
-    the operator reading the feedback buffer to a carrier. This never consults
-    the C++ source, only the rendered audio.
+    the operator reading the feedback buffer to a carrier. The prediction comes
+    from dexed/algorithms.py and the measurement from rendered audio; the C++
+    source is not consulted, so this stands on its own if the decoder above is
+    ever wrong.
     """
     src, tgt = algorithms[alg].feedback_edge
-    src, tgt = src + 1, tgt + 1
 
     deltas, levels = [], []
     for op in range(6):
@@ -193,11 +233,30 @@ def test_feedback_edge_matches_engine_behaviour(cpp_table, alg):
     peak = max(deltas)
     assert peak > 0, "feedback had no audible effect on any operator"
 
-    # A mute that silences the patch outright tells us nothing.
-    audible = [op + 1 for op in range(6) if levels[op] > 1e-4]
-    inert = {op for op in audible if deltas[op - 1] / peak < 0.1}
+    # A mute that silences the patch outright tells us nothing, and so does one
+    # inside a collapsed feedback chain.
+    collapsed = _collapsed_chain_interior(alg, src, tgt)
+    assert not collapsed or alg == 3, (
+        f"unexpected collapsed chain interior {sorted(collapsed)} for algorithm "
+        f"{alg}; only DX7 algorithm 4 should have one"
+    )
+    classified = [
+        op for op in range(6) if levels[op] > 1e-4 and op not in collapsed
+    ]
+
+    # Every point must land firmly on one side. A ratio in between means the
+    # model and the engine disagree about something -- fail loudly rather than
+    # bucketing it by whichever side of a single threshold it happens to fall.
+    for op in classified:
+        ratio = deltas[op] / peak
+        assert ratio < 1e-3 or ratio > 0.5, (
+            f"algorithm {alg}, muting operator {op}: feedback delta ratio "
+            f"{ratio:.5f} is neither inert nor live"
+        )
+
+    inert = {op for op in classified if deltas[op] / peak < 1e-3}
     expected = {
-        op for op in audible
-        if op == src or not _reaches_output(cpp_table[alg], tgt, op)
+        op for op in classified
+        if op == src or not _reaches_output(alg, tgt, op)
     }
     assert inert == expected
