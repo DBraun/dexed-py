@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cmath>
 #include <memory>
+#include <mutex>
 #include <algorithm>
 
 #include "msfa/controllers.h"
@@ -25,6 +26,21 @@
 #include "EngineMkI.h"
 
 namespace nb = nanobind;
+
+// Acquire `m` with the Python GIL released.
+//
+// The render loops mutate per-instance state while holding no GIL, so a thread
+// that blocked on the mutex *while* holding the GIL would stop the rendering
+// thread from ever reacquiring it, deadlocking the interpreter. Dropping the
+// GIL before waiting keeps that from happening.
+static std::unique_lock<std::mutex> lock_without_gil(std::mutex &m) {
+    std::unique_lock<std::mutex> lock(m, std::defer_lock);
+    {
+        nb::gil_scoped_release release;
+        lock.lock();
+    }
+    return lock;
+}
 
 // EngineMkI envelope constants (defined in EngineMkI.cpp, mirrored here)
 static const uint16_t ENV_BITDEPTH = 14;
@@ -222,6 +238,10 @@ private:
     
     // Pre-allocated buffer for render_all_ops
     std::vector<int32_t> mixed_buffer;
+
+    // Serializes every method that touches the state above, so that sharing one
+    // synth between Python threads is safe rather than a use-after-free.
+    std::mutex state_mutex;
     static constexpr float INT32_TO_FLOAT_SCALE = 1.0f / (1L << 25);
     
     // Convert normalized [0,1] to DX7 parameter range
@@ -393,6 +413,7 @@ public:
     }
     
     void load_params(nb::ndarray<nb::numpy, float, nb::shape<185>, nb::c_contig> params) {
+        auto lock = lock_without_gil(state_mutex);
         ensure_initialized();
         
         // Get raw pointer to parameters
@@ -410,6 +431,7 @@ public:
         float note_duration = 3.0,
         float render_duration = 4.0
     ) {
+        auto lock = lock_without_gil(state_mutex);
         ensure_initialized();
         
         // Check that parameters have been loaded
@@ -498,6 +520,7 @@ public:
         float note_duration = 3.0,
         float render_duration = 4.0
     ) {
+        auto lock = lock_without_gil(state_mutex);
         ensure_initialized();
         
         // Check that parameters have been loaded
@@ -599,6 +622,7 @@ public:
     }
 
     void set_algorithm(int alg) {
+        auto lock = lock_without_gil(state_mutex);
         if (alg < 0 || alg > 31) {
             throw std::runtime_error("Algorithm must be between 0 and 31");
         }
@@ -610,6 +634,7 @@ public:
     }
 
     void load_sysex(nb::bytes data) {
+        auto lock = lock_without_gil(state_mutex);
         ensure_initialized();
         if (data.size() < 156) {
             throw std::runtime_error("Sysex data must be at least 156 bytes");
@@ -624,6 +649,7 @@ public:
     }
 
     void set_normalize_feedback(bool normalize) {
+        auto lock = lock_without_gil(state_mutex);
         engine.normalize_feedback = normalize;
     }
 
