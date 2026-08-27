@@ -182,7 +182,10 @@ class Patch:
     """
 
     def __init__(self, name: str = "INIT VOICE"):
-        self.name = name[:10].ljust(10)  # DX7 names are exactly 10 chars
+        # DX7 names are exactly 10 characters, padding included. They are kept
+        # that way on load too, so a bank round-trips byte for byte; call
+        # .strip() when displaying one.
+        self.name = name[:10].ljust(10)
 
         # Global parameters
         self.algorithm = 0  # 0-31
@@ -273,10 +276,10 @@ class Patch:
         # Transpose
         patch.transpose = data[144]
 
-        # Name (10 ASCII characters)
+        # Name (10 ASCII characters, kept byte for byte -- see Patch.name)
         if len(data) >= 155:
-            name_bytes = bytes(data[145:155])
-            patch.name = name_bytes.decode("ascii", errors="replace").strip()
+            name_bytes = bytes(b & 0x7F for b in data[145:155])
+            patch.name = name_bytes.decode("ascii")
 
         return patch
 

@@ -220,13 +220,39 @@ class TestBankIO:
 
         assert len(loaded) == 32
         for original, restored in zip(patches, loaded):
-            assert restored.name.strip() == original.name.strip()
+            assert restored.name == original.name
             assert restored.algorithm == original.algorithm
             assert restored.feedback == original.feedback
 
     def test_wrong_patch_count_is_rejected(self, tmp_path):
         with pytest.raises(ValueError, match="exactly 32"):
             Patch.save_to_bank(str(tmp_path / "bank.syx"), [Patch()])
+
+    def test_leading_and_trailing_spaces_in_names_survive(self, tmp_path):
+        """Names are 10 bytes wide; stripping them rewrote the file.
+
+        Round-tripping Dexed's own factory banks used to change the name bytes
+        of voices like ' -RHODES- ' and ' THE  FIX '.
+        """
+        names = ["  CIRRUS  ", " -RHODES- ", "E.PIANO 1 ", "          "]
+        patches = [Patch(name=names[i % len(names)]) for i in range(32)]
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), patches)
+        first = path.read_bytes()
+
+        reloaded = Patch.load_bank(str(path))
+        assert [p.name for p in reloaded] == [p.name for p in patches]
+        assert all(len(p.name) == 10 for p in reloaded)
+
+        again = tmp_path / "bank2.syx"
+        Patch.save_to_bank(str(again), reloaded)
+        assert again.read_bytes() == first
+
+    def test_high_bit_name_bytes_are_masked_not_replaced(self):
+        """Dexed masks name bytes with 0x7F; we used to emit U+FFFD."""
+        data = bytearray(Patch(name="ABCDEFGHIJ").to_sysex())
+        data[145] = ord("E") | 0x80
+        assert Patch.from_sysex(bytes(data)).name == "EBCDEFGHIJ"
 
     def test_saved_bank_is_a_real_bulk_dump(self, tmp_path):
         """A .syx file has to be sendable to a DX7, not a bare payload."""

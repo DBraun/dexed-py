@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   decodes into 32 byte-shifted voices. It verifies the checksum and warns on a
   mismatch, rejects a file with no 32-voice dump in it, and raises `ValueError`
   rather than `IndexError` on an empty file.
+- `Patch.name` is no longer stripped when a patch is loaded. It is a 10-byte
+  DX7 field and is now always exactly 10 characters, whatever the patch came
+  from, so a bank round-trips byte for byte. Call `.strip()` when displaying a
+  name, as the documented examples already do.
 
 ### Fixed
 
