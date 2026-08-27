@@ -250,6 +250,73 @@ class TestRendering:
         assert not np.allclose(audio_60, audio_72)
 
 
+class TestCrossOperatorFeedbackRendering:
+    """Feedback that wraps a chain, not just a single operator.
+
+    The (source, target) feedback rework was only ever asserted at the
+    dictionary level: swapping source and target in both render loops left the
+    whole suite passing, even though it changes the audio completely. These
+    tests are asymmetric on purpose -- an edge one way must be audible and the
+    same edge the other way must not be -- so an inverted routing fails.
+    """
+
+    @staticmethod
+    def _graph():
+        """op2 -> op1 -> op0(carrier), plus op3 wired to nothing.
+
+        op3 produces sound but reaches the output only if something taps it, so
+        feedback (3, 0) is audible while feedback (0, 3) is a dead end.
+        """
+        graph = OperatorGraph(num_ops=4)
+        for i in range(4):
+            graph.op[i].output_level = 99
+            graph.op[i].frequency_coarse = i + 1
+            graph.op[i].envelope.rates = [99, 99, 99, 99]
+            graph.op[i].envelope.levels = [99, 99, 99, 0]
+        graph.connect(2, 1, 1.0)
+        graph.connect(1, 0, 1.0)
+        graph.set_carriers([0])
+        return graph
+
+    @staticmethod
+    def _render(graph):
+        return graph.render(
+            sample_rate=44100, midi_note=60, velocity=100,
+            note_duration=0.05, render_duration=0.1,
+        )
+
+    def test_feedback_into_the_carrier_is_audible(self):
+        baseline = self._render(self._graph())
+        tapped = self._render(self._graph().set_feedback(3, 0, level=7))
+        assert np.abs(tapped - baseline).max() > 0.1
+
+    def test_feedback_out_of_the_carrier_into_a_dead_end_is_not(self):
+        """op3 feeds nothing, so writing into its phase cannot reach the mix."""
+        baseline = self._render(self._graph())
+        dead_end = self._render(self._graph().set_feedback(0, 3, level=7))
+        assert np.array_equal(dead_end, baseline)
+
+    def test_cross_operator_feedback_changes_the_audio(self):
+        baseline = self._render(self._graph())
+        wrapped = self._render(self._graph().set_feedback(0, 2, level=7))
+        assert np.abs(wrapped - baseline).max() > 1e-3
+
+    def test_feedback_level_zero_is_the_same_as_no_feedback(self):
+        baseline = self._render(self._graph())
+        assert np.array_equal(
+            self._render(self._graph().set_feedback(3, 0, level=0)), baseline
+        )
+
+    def test_render_all_ops_agrees_with_render_under_cross_feedback(self):
+        graph = self._graph().set_feedback(3, 0, level=7)
+        mixed = self._render(graph)
+        per_op = graph.render_all_ops(
+            sample_rate=44100, midi_note=60, velocity=100,
+            note_duration=0.05, render_duration=0.1,
+        )
+        assert np.allclose(per_op[-1], mixed, atol=1e-6)
+
+
 class TestSevenOperators:
     """Tests specifically for 7+ operator graphs."""
 
