@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   DX7 field and is now always exactly 10 characters, whatever the patch came
   from, so a bank round-trips byte for byte. Call `.strip()` when displaying a
   name, as the documented examples already do.
+- `Algorithm` is frozen, `Algorithm.carriers` and `.modulators` are tuples, and
+  `Algorithm.mod_matrix` is non-writeable. `get_carriers()` and
+  `get_modulators()` return fresh lists, as `get_mod_matrix()` already did.
+  They used to hand out the module-level lists themselves, so appending to a
+  returned list corrupted the algorithm table for the rest of the process.
+  Comparisons like `algorithms[31].carriers == [0, 1, 2, 3, 4, 5]` need to
+  compare against a tuple now; `get_carriers(31)` still returns a list.
 
 ### Fixed
 

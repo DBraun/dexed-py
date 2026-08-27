@@ -12,23 +12,28 @@ from typing import List, Tuple
 import numpy as np
 
 
-@dataclass
+@dataclass(frozen=True)
 class Algorithm:
     """
     Information about a single DX7 algorithm.
 
+    Instances are shared module-wide and must not be mutated: the fields are
+    read-only, ``mod_matrix`` is a non-writeable array, and the accessor
+    functions hand out copies of the lists.
+
     Attributes:
         number: Algorithm number (0-31)
-        carriers: List of operator indices (0-5) that output to audio
-        modulators: List of operator indices (0-5) that modulate other operators
-        mod_matrix: 6x6 matrix where mod_matrix[i,j]=1 means op j modulates op i
+        carriers: Operator indices (0-5) that output to audio
+        modulators: Operator indices (0-5) that modulate other operators
+        mod_matrix: read-only 6x6 matrix where mod_matrix[i,j]=1 means op j
+            modulates op i
         feedback_edge: (source, target) operator indices for the feedback connection.
             For most algorithms source == target (self-feedback). Algorithms 3 and 5
             (DX7 algos 4 and 6) have cross-operator feedback.
     """
     number: int
-    carriers: List[int]
-    modulators: List[int]
+    carriers: Tuple[int, ...]
+    modulators: Tuple[int, ...]
     mod_matrix: np.ndarray
     feedback_edge: Tuple[int, int]
 
@@ -306,11 +311,13 @@ class _AlgorithmDict:
     def __init__(self):
         self._algorithms = {}
         for num, (carriers, modulators, fb_edge, matrix) in _ALGORITHM_DATA.items():
+            mod_matrix = np.array(matrix, dtype=np.int8)
+            mod_matrix.flags.writeable = False
             self._algorithms[num] = Algorithm(
                 number=num,
-                carriers=carriers,
-                modulators=modulators,
-                mod_matrix=np.array(matrix, dtype=np.int8),
+                carriers=tuple(carriers),
+                modulators=tuple(modulators),
+                mod_matrix=mod_matrix,
                 feedback_edge=fb_edge,
             )
 
@@ -334,13 +341,19 @@ algorithms = _AlgorithmDict()
 
 
 def get_carriers(algorithm: int) -> List[int]:
-    """Get list of carrier operator numbers for an algorithm."""
-    return algorithms[algorithm].carriers
+    """Get list of carrier operator indices (0-5) for an algorithm.
+
+    Returns a fresh list; mutating it does not affect the algorithm table.
+    """
+    return list(algorithms[algorithm].carriers)
 
 
 def get_modulators(algorithm: int) -> List[int]:
-    """Get list of modulator operator numbers for an algorithm."""
-    return algorithms[algorithm].modulators
+    """Get list of modulator operator indices (0-5) for an algorithm.
+
+    Returns a fresh list; mutating it does not affect the algorithm table.
+    """
+    return list(algorithms[algorithm].modulators)
 
 
 def get_mod_matrix(algorithm: int) -> np.ndarray:

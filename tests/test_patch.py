@@ -513,8 +513,9 @@ class TestSynthWithPatch:
         for i in range(32):
             alg = algorithms[i]
             assert alg.number == i
-            assert isinstance(alg.carriers, list)
-            assert isinstance(alg.modulators, list)
+            # The shared table hands out immutable tuples
+            assert isinstance(alg.carriers, tuple)
+            assert isinstance(alg.modulators, tuple)
 
     def test_algorithms_invalid(self):
         """Test that invalid algorithm numbers raise errors."""
@@ -530,8 +531,30 @@ class TestSynthWithPatch:
         assert 2 in algorithms[0].carriers
 
         # Algorithm 31: all operators are carriers
-        assert algorithms[31].carriers == [0, 1, 2, 3, 4, 5]
-        assert algorithms[31].modulators == []
+        assert algorithms[31].carriers == (0, 1, 2, 3, 4, 5)
+        assert algorithms[31].modulators == ()
+
+    def test_the_shared_table_cannot_be_corrupted(self):
+        """get_carriers used to hand out the module-level list itself.
+
+        Appending to it poisoned the algorithm table for the whole process, and
+        the next OperatorGraph.from_algorithm raised "Carrier must be 0-5".
+        """
+        carriers = get_carriers(0)
+        carriers.append(7)
+        assert get_carriers(0) == [0, 2]
+        assert 7 not in algorithms[0].carriers
+
+        modulators = get_modulators(0)
+        modulators.clear()
+        assert get_modulators(0) == [1, 3, 4, 5]
+
+        with pytest.raises(ValueError):
+            algorithms[15].mod_matrix[3, 3] = 1
+        assert get_mod_matrix(15)[3, 3] == 0
+
+        with pytest.raises(Exception):
+            algorithms[0].carriers = (0,)
 
     def test_mod_matrix_shape(self):
         """Test modulation matrix shape."""
