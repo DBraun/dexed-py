@@ -161,6 +161,129 @@ class TestGraphFromAlgorithm:
             assert set(graph.carriers) == set(alg.carriers)
 
 
+class TestFeedbackLevelValidation:
+    """set_feedback validated its operators but not its level."""
+
+    def test_float_level_is_rejected(self):
+        """0.5 used to be stored and then blow up inside the render loop.
+
+        The traceback pointed at `'int' >> 'float'` in graph.py rather than at
+        the bad argument.
+        """
+        graph = OperatorGraph(num_ops=3)
+        with pytest.raises(TypeError, match="must be an integer"):
+            graph.set_feedback(0, 0, level=0.5)
+
+    def test_numpy_float_is_rejected_too(self):
+        """A level read out of a numpy array used to fail intermittently."""
+        graph = OperatorGraph(num_ops=3)
+        with pytest.raises(TypeError):
+            graph.set_feedback(0, 0, level=np.float64(3.0))
+
+    def test_numpy_integer_is_accepted(self):
+        graph = OperatorGraph(num_ops=3)
+        graph.set_feedback(0, 0, level=np.int64(3))
+        assert graph.get_feedback(0, 0) == 3
+
+    @pytest.mark.parametrize("level", [-2, 8, 99])
+    def test_out_of_range_level_is_rejected(self, level):
+        """99 used to be clamped to 7 and -2 recorded nothing, both silently."""
+        graph = OperatorGraph(num_ops=3)
+        with pytest.raises(ValueError, match="must be 0-7"):
+            graph.set_feedback(0, 0, level=level)
+
+    def test_level_zero_removes_the_edge(self):
+        graph = OperatorGraph(num_ops=3)
+        graph.set_feedback(0, 0, level=7)
+        graph.set_feedback(0, 0, level=0)
+        assert graph.get_feedback(0, 0) == 0
+
+    def test_from_matrix_rejects_a_float_level(self):
+        matrix = np.zeros((4, 4), dtype=np.float32)
+        matrix[0, 1] = 1.0
+        with pytest.raises(TypeError):
+            OperatorGraph.from_matrix(matrix, carriers=[0], feedback={(3, 3): 0.5})
+
+
+class TestCyclesAreRejected:
+    """A cycle in the modulation matrix has no valid processing order."""
+
+    @staticmethod
+    def _render(graph):
+        return graph.render(
+            sample_rate=44100, midi_note=60, velocity=100,
+            note_duration=0.05, render_duration=0.1,
+        )
+
+    def test_two_operator_cycle_raises(self):
+        graph = OperatorGraph(num_ops=2)
+        graph.connect(0, 1)
+        graph.connect(1, 0)
+        graph.set_carriers([0])
+        with pytest.raises(ValueError, match="cycle"):
+            self._render(graph)
+
+    def test_cycle_message_names_the_unorderable_operators(self):
+        """op0 reads op2, which is in the cycle, so it cannot be ordered either."""
+        graph = OperatorGraph(num_ops=3)
+        graph.connect(1, 2)
+        graph.connect(2, 1)
+        graph.connect(2, 0)
+        graph.set_carriers([0])
+        with pytest.raises(ValueError, match=r"operators \[0, 1, 2\]"):
+            self._render(graph)
+
+    def test_render_all_ops_rejects_a_cycle_too(self):
+        graph = OperatorGraph(num_ops=2)
+        graph.connect(0, 1)
+        graph.connect(1, 0)
+        graph.set_carriers([0])
+        with pytest.raises(ValueError, match="cycle"):
+            graph.render_all_ops(
+                sample_rate=44100, midi_note=60, velocity=100,
+                note_duration=0.05, render_duration=0.1,
+            )
+
+    def test_a_loop_closed_with_feedback_still_renders(self):
+        graph = OperatorGraph(num_ops=2)
+        for i in range(2):
+            graph.op[i].output_level = 99
+            graph.op[i].envelope.rates = [99, 99, 99, 99]
+            graph.op[i].envelope.levels = [99, 99, 99, 0]
+        graph.connect(1, 0)
+        graph.set_carriers([0])
+        graph.set_feedback(0, 1, level=7)
+        assert np.any(self._render(graph))
+
+
+class TestSelfModulationIsRejected:
+    """connect(i, i) was stored, reported everywhere, and silently ignored."""
+
+    def test_connect_to_self_raises(self):
+        graph = OperatorGraph(num_ops=3)
+        with pytest.raises(ValueError, match="set_feedback"):
+            graph.connect(0, 0, 1.0)
+        assert not graph.is_connected(0, 0)
+
+    def test_from_matrix_rejects_a_nonzero_diagonal(self):
+        matrix = np.zeros((3, 3), dtype=np.float32)
+        matrix[1, 0] = 1.0
+        matrix[2, 2] = 1.0
+        with pytest.raises(ValueError, match="diagonal"):
+            OperatorGraph.from_matrix(matrix, carriers=[0])
+
+    def test_from_matrix_accepts_a_zero_diagonal(self):
+        matrix = np.zeros((3, 3), dtype=np.float32)
+        matrix[0, 1] = 1.0
+        graph = OperatorGraph.from_matrix(matrix, carriers=[0])
+        assert graph.is_connected(1, 0)
+
+    def test_self_modulation_goes_through_set_feedback(self):
+        graph = OperatorGraph(num_ops=3)
+        graph.set_feedback(0, 0, level=7)
+        assert graph.get_feedback(0, 0) == 7
+
+
 class TestGraphFromMatrix:
     """Tests for creating graphs from modulation matrices."""
 
@@ -248,6 +371,73 @@ class TestRendering:
 
         # Different notes should produce different audio
         assert not np.allclose(audio_60, audio_72)
+
+
+class TestCrossOperatorFeedbackRendering:
+    """Feedback that wraps a chain, not just a single operator.
+
+    The (source, target) feedback rework was only ever asserted at the
+    dictionary level: swapping source and target in both render loops left the
+    whole suite passing, even though it changes the audio completely. These
+    tests are asymmetric on purpose -- an edge one way must be audible and the
+    same edge the other way must not be -- so an inverted routing fails.
+    """
+
+    @staticmethod
+    def _graph():
+        """op2 -> op1 -> op0(carrier), plus op3 wired to nothing.
+
+        op3 produces sound but reaches the output only if something taps it, so
+        feedback (3, 0) is audible while feedback (0, 3) is a dead end.
+        """
+        graph = OperatorGraph(num_ops=4)
+        for i in range(4):
+            graph.op[i].output_level = 99
+            graph.op[i].frequency_coarse = i + 1
+            graph.op[i].envelope.rates = [99, 99, 99, 99]
+            graph.op[i].envelope.levels = [99, 99, 99, 0]
+        graph.connect(2, 1, 1.0)
+        graph.connect(1, 0, 1.0)
+        graph.set_carriers([0])
+        return graph
+
+    @staticmethod
+    def _render(graph):
+        return graph.render(
+            sample_rate=44100, midi_note=60, velocity=100,
+            note_duration=0.05, render_duration=0.1,
+        )
+
+    def test_feedback_into_the_carrier_is_audible(self):
+        baseline = self._render(self._graph())
+        tapped = self._render(self._graph().set_feedback(3, 0, level=7))
+        assert np.abs(tapped - baseline).max() > 0.1
+
+    def test_feedback_out_of_the_carrier_into_a_dead_end_is_not(self):
+        """op3 feeds nothing, so writing into its phase cannot reach the mix."""
+        baseline = self._render(self._graph())
+        dead_end = self._render(self._graph().set_feedback(0, 3, level=7))
+        assert np.array_equal(dead_end, baseline)
+
+    def test_cross_operator_feedback_changes_the_audio(self):
+        baseline = self._render(self._graph())
+        wrapped = self._render(self._graph().set_feedback(0, 2, level=7))
+        assert np.abs(wrapped - baseline).max() > 1e-3
+
+    def test_feedback_level_zero_is_the_same_as_no_feedback(self):
+        baseline = self._render(self._graph())
+        assert np.array_equal(
+            self._render(self._graph().set_feedback(3, 0, level=0)), baseline
+        )
+
+    def test_render_all_ops_agrees_with_render_under_cross_feedback(self):
+        graph = self._graph().set_feedback(3, 0, level=7)
+        mixed = self._render(graph)
+        per_op = graph.render_all_ops(
+            sample_rate=44100, midi_note=60, velocity=100,
+            note_duration=0.05, render_duration=0.1,
+        )
+        assert np.allclose(per_op[-1], mixed, atol=1e-6)
 
 
 class TestSevenOperators:
@@ -347,6 +537,18 @@ class TestGraphOperator:
 
         op.frequency_fine = 50
         assert op.frequency_ratio == 3.0  # 2 * 1.5
+
+    def test_fixed_frequency(self):
+        """Fixed mode reports Hz, using only the low two bits of coarse."""
+        op = GraphOperator()
+        op.frequency_mode = 1
+        for coarse, fine, expected in [
+            (0, 0, 1.0), (1, 0, 10.0), (2, 0, 100.0), (3, 0, 1000.0),
+            (5, 0, 10.0), (2, 30, 199.526231),
+        ]:
+            op.frequency_coarse = coarse
+            op.frequency_fine = fine
+            assert op.frequency_ratio == pytest.approx(expected)
 
 
 class TestGraphEnvelope:

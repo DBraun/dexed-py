@@ -79,5 +79,56 @@ def test_render_multiple_notes():
     assert all(len(a) == int(44100 * 4.0) for a in [audio1, audio2, audio3])
 
 
+@pytest.mark.parametrize("byte134", [8, 40, 72, 200, 255])
+def test_load_sysex_bounds_the_algorithm_byte(byte134):
+    """Byte 134 indexes a 32-entry table in Dx7Note::init, unmasked.
+
+    load_sysex memcpy'd all 156 bytes verbatim, so an out-of-range byte read
+    past the end of FmCore::algorithms; .algorithm reported a masked value that
+    did not match what was rendered.
+    """
+    from dexed._dexed import DexedSynth as RawSynth
+
+    patch = dexed.Patch()
+    for i in range(6):
+        patch.op[i].output_level = 99
+    data = bytearray(patch.to_sysex())
+    data[134] = byte134
+
+    synth = RawSynth(44100.0, 0)
+    synth.load_sysex(bytes(data))
+    assert synth.algorithm == byte134 & 0x1F
+
+    reference = RawSynth(44100.0, 0)
+    data[134] = byte134 & 0x1F
+    reference.load_sysex(bytes(data))
+    assert np.array_equal(
+        synth.render(60, 100, 0.05, 0.1), reference.render(60, 100, 0.05, 0.1)
+    )
+
+
+@pytest.mark.parametrize("byte135", [7, 9, 10, 100, 255])
+def test_load_sysex_bounds_the_feedback_byte(byte135):
+    """Feedback >= 10 made the kernels shift by a negative count."""
+    from dexed._dexed import DexedSynth as RawSynth
+
+    patch = dexed.Patch()
+    patch.algorithm = 31
+    for i in range(6):
+        patch.op[i].output_level = 99
+    data = bytearray(patch.to_sysex())
+    data[135] = byte135
+
+    synth = RawSynth(44100.0, 0)
+    synth.load_sysex(bytes(data))
+
+    reference = RawSynth(44100.0, 0)
+    data[135] = byte135 & 0x07
+    reference.load_sysex(bytes(data))
+    assert np.array_equal(
+        synth.render(60, 100, 0.05, 0.1), reference.render(60, 100, 0.05, 0.1)
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cmath>
 #include <memory>
+#include <mutex>
 #include <algorithm>
 
 #include "msfa/controllers.h"
@@ -26,6 +27,64 @@
 
 namespace nb = nanobind;
 
+// Acquire `m` with the Python GIL released.
+//
+// The render loops mutate per-instance state while holding no GIL, so a thread
+// that blocked on the mutex *while* holding the GIL would stop the rendering
+// thread from ever reacquiring it, deadlocking the interpreter. Dropping the
+// GIL before waiting keeps that from happening.
+static std::unique_lock<std::mutex> lock_without_gil(std::mutex &m) {
+    std::unique_lock<std::mutex> lock(m, std::defer_lock);
+    {
+        nb::gil_scoped_release release;
+        lock.lock();
+    }
+    return lock;
+}
+
+// Freqlut, Env, PitchEnv and Lfo keep process-wide lookup tables built for one
+// sample rate. Whichever synth initialized them last owns them, so without this
+// bookkeeping a synth created at a second sample rate silently retunes every
+// synth already alive -- by a semitone and a half between 44.1k and 48k.
+//
+// Renders re-point the tables at their own sample rate and hold a claim on them
+// until they finish. Concurrent renders at one rate share the tables freely;
+// concurrent renders at *different* rates cannot both be right, so the second
+// one raises rather than returning quietly detuned audio.
+static std::mutex g_table_mutex;
+static double g_table_sample_rate = 0.0;
+static int g_table_claims = 0;
+
+class GlobalTableClaim {
+public:
+    explicit GlobalTableClaim(double sample_rate) {
+        std::lock_guard<std::mutex> guard(g_table_mutex);
+        if (g_table_sample_rate != sample_rate) {
+            if (g_table_claims > 0) {
+                throw std::runtime_error(
+                    "Cannot render at two different sample rates at the same "
+                    "time: the DX7 frequency, envelope and LFO tables are "
+                    "shared process-wide. Render sequentially, or use one "
+                    "sample rate per process.");
+            }
+            Freqlut::init(sample_rate);
+            Env::init_sr(sample_rate);
+            PitchEnv::init(sample_rate);
+            Lfo::init(sample_rate);
+            g_table_sample_rate = sample_rate;
+        }
+        g_table_claims++;
+    }
+
+    ~GlobalTableClaim() {
+        std::lock_guard<std::mutex> guard(g_table_mutex);
+        g_table_claims--;
+    }
+
+    GlobalTableClaim(const GlobalTableClaim &) = delete;
+    GlobalTableClaim &operator=(const GlobalTableClaim &) = delete;
+};
+
 // EngineMkI envelope constants (defined in EngineMkI.cpp, mirrored here)
 static const uint16_t ENV_BITDEPTH = 14;
 static const uint16_t ENV_MAX = 1 << ENV_BITDEPTH;
@@ -37,7 +96,8 @@ public:
     int32_t op_outputs[6][N];
 
     // When true, use consistent feedback scaling across all algorithms
-    // When false (default), use Dexed-authentic behavior where algorithms 4, 6, 32 have reduced feedback
+    // When false (default), use Dexed-authentic behavior where DX7 algorithms 4, 6, 32
+    // -- indices 3, 5, 31 -- have reduced feedback
     bool normalize_feedback = false;
     
     // Override the virtual render method to capture individual operator outputs
@@ -93,42 +153,52 @@ public:
                     if ((flags & 0xc0) == 0xc0 && fb_on) {
                         // Compute effective feedback shift
                         // When normalize_feedback is true, use feedback_shift directly for all algorithms
-                        // When false (Dexed-authentic), algorithms 4, 6, 32 get reduced feedback (+2)
+                        // When false (Dexed-authentic), DX7 algorithms 4, 6, 32 (indices 3, 5, 31)
+                        // get reduced feedback (+2)
                         int32_t fb_shift_3op = normalize_feedback ? feedback_shift : min((feedback_shift+2), 16);
                         int32_t fb_shift_2op = normalize_feedback ? feedback_shift : min((feedback_shift+2), 16);
                         int32_t fb_shift_1op_special = normalize_feedback ? feedback_shift : min((feedback_shift+2), 16);
 
                         switch (algorithm) {
-                            case 3:  // Algorithm 4 - special 3-op feedback
-                                compute_fb3(capture_ptr, params, gain1, gain2, fb_buf, fb_shift_3op);
+                            case 3: {  // Algorithm 4 - special 3-op feedback
+                                // The chain collapses ops 0..2 into one loop, so
+                                // capture each stage separately: the last one is
+                                // what reaches the mix.
+                                int32_t *chain = op_outputs[2];
+                                compute_fb3(chain, params, gain1, gain2, fb_buf, fb_shift_3op,
+                                            op_outputs[0], op_outputs[1]);
                                 // Copy to output buffer
                                 if (add) {
                                     for (int i = 0; i < N; ++i) {
-                                        outptr[i] += capture_ptr[i];
+                                        outptr[i] += chain[i];
                                     }
                                 } else {
-                                    std::memcpy(outptr, capture_ptr, N * sizeof(int32_t));
+                                    std::memcpy(outptr, chain, N * sizeof(int32_t));
                                 }
                                 // Skip next two operators as they were processed
                                 params[1].phase += params[1].freq << LG_N;
                                 params[2].phase += params[2].freq << LG_N;
                                 op += 2;
                                 break;
+                            }
 
-                            case 5:  // Algorithm 6 - special 2-op feedback
-                                compute_fb2(capture_ptr, params, gain1, gain2, fb_buf, fb_shift_2op);
+                            case 5: {  // Algorithm 6 - special 2-op feedback
+                                int32_t *chain = op_outputs[1];
+                                compute_fb2(chain, params, gain1, gain2, fb_buf, fb_shift_2op,
+                                            op_outputs[0]);
                                 // Copy to output buffer
                                 if (add) {
                                     for (int i = 0; i < N; ++i) {
-                                        outptr[i] += capture_ptr[i];
+                                        outptr[i] += chain[i];
                                     }
                                 } else {
-                                    std::memcpy(outptr, capture_ptr, N * sizeof(int32_t));
+                                    std::memcpy(outptr, chain, N * sizeof(int32_t));
                                 }
                                 // Skip next operator as it was processed
                                 params[1].phase += params[1].freq << LG_N;
                                 op++;
                                 break;
+                            }
 
                             case 31:  // Algorithm 32 - single op feedback (Dexed uses reduced feedback here too)
                                 compute_fb(capture_ptr, param.phase, param.freq, gain1, gain2,
@@ -222,6 +292,10 @@ private:
     
     // Pre-allocated buffer for render_all_ops
     std::vector<int32_t> mixed_buffer;
+
+    // Serializes every method that touches the state above, so that sharing one
+    // synth between Python threads is safe rather than a use-after-free.
+    mutable std::mutex state_mutex;
     static constexpr float INT32_TO_FLOAT_SCALE = 1.0f / (1L << 25);
     
     // Convert normalized [0,1] to DX7 parameter range
@@ -364,14 +438,11 @@ public:
     void ensure_initialized() {
         if (initialized) return;
         
-        // Initialize core modules with the instance's sample rate
-        Freqlut::init(sample_rate);
+        // Rate-independent tables; the rate-dependent ones are claimed per
+        // render by GlobalTableClaim.
         Exp2::init();
         Sin::init();
-        Env::init_sr(sample_rate);
-        PitchEnv::init(sample_rate);
-        Lfo::init(sample_rate);
-        
+
         // Setup tuning
         tuning = std::make_shared<StdTuning>();
         
@@ -393,6 +464,7 @@ public:
     }
     
     void load_params(nb::ndarray<nb::numpy, float, nb::shape<185>, nb::c_contig> params) {
+        auto lock = lock_without_gil(state_mutex);
         ensure_initialized();
         
         // Get raw pointer to parameters
@@ -410,6 +482,7 @@ public:
         float note_duration = 3.0,
         float render_duration = 4.0
     ) {
+        auto lock = lock_without_gil(state_mutex);
         ensure_initialized();
         
         // Check that parameters have been loaded
@@ -417,12 +490,16 @@ public:
             throw std::runtime_error("Parameters must be loaded before rendering. Call load_params() first.");
         }
 
+        // Point the shared DX7 tables at this synth's sample rate.
+        GlobalTableClaim tables(sample_rate);
+
         // Create fresh LFO and voice objects to ensure complete state reset
         lfo = std::make_unique<Lfo>();
         lfo->reset(&dx7_params[137]);
         lfo->keydown();
 
-        voice = std::make_unique<Dx7Note>(tuning, &engine);
+        // No MTS-ESP client in the standalone binding; see src/UPSTREAM_CHANGES.md
+        voice = std::make_unique<Dx7Note>(tuning, nullptr);
 
         // Apply transpose: DX7 stores 0-48 with 24 meaning no shift (C3)
         int transposed_note = midi_note + (dx7_params[144] - 24);
@@ -498,6 +575,7 @@ public:
         float note_duration = 3.0,
         float render_duration = 4.0
     ) {
+        auto lock = lock_without_gil(state_mutex);
         ensure_initialized();
         
         // Check that parameters have been loaded
@@ -505,12 +583,16 @@ public:
             throw std::runtime_error("Parameters must be loaded before rendering. Call load_params() first.");
         }
 
+        // Point the shared DX7 tables at this synth's sample rate.
+        GlobalTableClaim tables(sample_rate);
+
         // Create fresh LFO and voice objects to ensure complete state reset
         lfo = std::make_unique<Lfo>();
         lfo->reset(&dx7_params[137]);
         lfo->keydown();
 
-        voice = std::make_unique<Dx7Note>(tuning, &engine);
+        // No MTS-ESP client in the standalone binding; see src/UPSTREAM_CHANGES.md
+        voice = std::make_unique<Dx7Note>(tuning, nullptr);
 
         // Apply transpose: DX7 stores 0-48 with 24 meaning no shift (C3)
         int transposed_note = midi_note + (dx7_params[144] - 24);
@@ -599,6 +681,7 @@ public:
     }
 
     void set_algorithm(int alg) {
+        auto lock = lock_without_gil(state_mutex);
         if (alg < 0 || alg > 31) {
             throw std::runtime_error("Algorithm must be between 0 and 31");
         }
@@ -610,12 +693,20 @@ public:
     }
 
     void load_sysex(nb::bytes data) {
+        auto lock = lock_without_gil(state_mutex);
         ensure_initialized();
         if (data.size() < 156) {
             throw std::runtime_error("Sysex data must be at least 156 bytes");
         }
         std::memcpy(dx7_params, data.data(), 156);
-        algorithm = dx7_params[134] & 0x1F;  // Sync from sysex byte (0-31)
+        // Dx7Note::init reads byte 134 unmasked and indexes the 32-entry
+        // algorithm table with it, and byte 135 >= 10 makes the feedback shift
+        // negative, so both have to be brought into range here -- exactly what
+        // Dexed's unpackProgram does. Patch.to_sysex() already clamps them;
+        // this guards the raw entry point.
+        dx7_params[134] &= 0x1F;
+        dx7_params[135] &= 0x07;
+        algorithm = dx7_params[134];  // Sync from sysex byte (0-31)
         params_loaded = true;
     }
 
@@ -624,12 +715,28 @@ public:
     }
 
     void set_normalize_feedback(bool normalize) {
+        auto lock = lock_without_gil(state_mutex);
         engine.normalize_feedback = normalize;
     }
 
-    // Pickle support using getstate/setstate to avoid reference leaks
+    // Restore the voice data captured by __getstate__.
+    void restore_params(nb::bytes data, bool loaded) {
+        auto lock = lock_without_gil(state_mutex);
+        if (data.size() != 156) {
+            throw std::runtime_error("Pickled voice data must be 156 bytes");
+        }
+        std::memcpy(dx7_params, data.c_str(), 156);
+        params_loaded = loaded;
+    }
+
+    // Pickle support using getstate/setstate to avoid reference leaks.
+    // The voice data is part of the state: without it an unpickled synth
+    // reports the right algorithm but raises as soon as you render.
     nb::tuple __getstate__() const {
-        return nb::make_tuple(sample_rate, algorithm, engine.normalize_feedback);
+        auto lock = lock_without_gil(state_mutex);
+        return nb::make_tuple(sample_rate, algorithm, engine.normalize_feedback,
+                              params_loaded,
+                              nb::bytes(reinterpret_cast<const char *>(dx7_params), 156));
     }
 };
 
@@ -705,12 +812,13 @@ NB_MODULE(_dexed, m) {
                      &DexedSynth::get_normalize_feedback,
                      &DexedSynth::set_normalize_feedback,
                      "When True, use consistent feedback scaling across all algorithms.\n"
-                     "When False (default), use Dexed-authentic behavior where algorithms 4, 6, 32\n"
+                     "When False (default), use Dexed-authentic behavior where DX7 algorithms\n"
+                     "4, 6 and 32 -- indices 3, 5 and 31, since this API is 0-based --\n"
                      "have reduced feedback strength compared to other algorithms.")
         .def("__getstate__", &DexedSynth::__getstate__,
              "Get state for pickle serialization")
         .def("__setstate__", [](DexedSynth &synth, nb::tuple state) {
-            if (state.size() < 2 || state.size() > 3) {
+            if (state.size() < 2 || state.size() == 4 || state.size() > 5) {
                 throw std::runtime_error("Invalid state for unpickling");
             }
 
@@ -719,9 +827,14 @@ NB_MODULE(_dexed, m) {
             int alg = nb::cast<int>(state[1]);
             new (&synth) DexedSynth(sr, alg);
 
-            // Handle normalize_feedback if present (backward compatibility)
-            if (state.size() == 3) {
+            // normalize_feedback and the voice data were both added later;
+            // older pickles carry 2- or 3-element states.
+            if (state.size() >= 3) {
                 synth.set_normalize_feedback(nb::cast<bool>(state[2]));
+            }
+            if (state.size() == 5) {
+                synth.restore_params(nb::cast<nb::bytes>(state[4]),
+                                     nb::cast<bool>(state[3]));
             }
         }, "Set state for pickle deserialization");
 }

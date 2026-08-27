@@ -1,7 +1,7 @@
 # Simple developer Makefile for dexed-py
 # The actual build is handled by scikit-build-core
 
-.PHONY: all clean install test wheel develop docs
+.PHONY: all clean install test wheel develop docs chart
 
 all: install
 
@@ -25,6 +25,11 @@ test:
 
 docs:
 	cd docs && make html
+
+# Redraw docs/dx7_algorithms.svg from the vendored routing table.
+# Add PNG=docs/dx7_algorithms.png to also rasterize (needs cairosvg).
+chart:
+	python docs/make_algorithm_chart.py $(if $(PNG),--png $(PNG),)
 
 # Install build dependencies
 deps:

@@ -8,7 +8,24 @@ to/from various formats (sysex, packed, normalized arrays).
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Union, Optional
+import warnings
+
 import numpy as np
+
+def _normparm(value: int, max_val: int) -> int:
+    """Bring a corrupt sysex byte into range, as Dexed's `normparm` does.
+
+    A value inside the range is kept; anything above it is treated as 0-255
+    noise and rescaled, rather than being handed to the engine as-is.
+    """
+    if value <= max_val:
+        return value
+    return int(value / 255 * max_val)
+
+
+# 32-voice bulk dump: F0 43 00 09 20 00, 4096 payload bytes, checksum, F7
+BANK_SYSEX_HEADER = bytes([0xF0, 0x43, 0x00, 0x09, 0x20, 0x00])
+BANK_SYSEX_SIZE = 4104
 
 # Curve names to indices
 CURVE_NAMES = {
@@ -154,14 +171,14 @@ class Operator:
             self.frequency_fine = int((remainder / int(value)) * 100) if int(value) > 0 else 0
 
     def _compute_fixed_freq(self) -> float:
-        """Compute fixed frequency in Hz from coarse/fine."""
-        # DX7 fixed frequency formula
-        base_freqs = [1, 10, 100, 1000]
-        coarse_idx = min(3, self.frequency_coarse // 4)
-        base = base_freqs[coarse_idx]
-        mult = (self.frequency_coarse % 4) + 1
-        fine_mult = 1.0 + (self.frequency_fine / 100.0)
-        return base * mult * fine_mult
+        """Compute fixed frequency in Hz from coarse/fine.
+
+        The engine computes ``logfreq = (4458616 * ((coarse & 3) * 100 + fine)) >> 3``
+        (``msfa/dx7note.cc``), i.e. a decade per unit of the low two coarse bits
+        and a hundredth of a decade per unit of fine. Detune is excluded, as it
+        is in ratio mode.
+        """
+        return 10.0 ** ((self.frequency_coarse & 3) + self.frequency_fine / 100.0)
 
 
 class Patch:
@@ -176,7 +193,10 @@ class Patch:
     """
 
     def __init__(self, name: str = "INIT VOICE"):
-        self.name = name[:10].ljust(10)  # DX7 names are exactly 10 chars
+        # DX7 names are exactly 10 characters, padding included. They are kept
+        # that way on load too, so a bank round-trips byte for byte; call
+        # .strip() when displaying one.
+        self.name = name[:10].ljust(10)
 
         # Global parameters
         self.algorithm = 0  # 0-31
@@ -261,21 +281,25 @@ class Patch:
         patch.lfo.pitch_mod_depth = data[139]
         patch.lfo.amp_mod_depth = data[140]
         patch.lfo.sync = bool(data[141] & 0x01)
-        patch.lfo._wave = data[142] & 0x07
+        patch.lfo.wave = data[142] & 0x07  # setter clamps 6-7 to the top wave
         patch.pitch_mod_sensitivity = data[143] & 0x07
 
         # Transpose
         patch.transpose = data[144]
 
-        # Name (10 ASCII characters)
+        # Name (10 ASCII characters, kept byte for byte -- see Patch.name)
         if len(data) >= 155:
-            name_bytes = bytes(data[145:155])
-            patch.name = name_bytes.decode("ascii", errors="replace").strip()
+            name_bytes = bytes(b & 0x7F for b in data[145:155])
+            patch.name = name_bytes.decode("ascii")
 
         return patch
 
     def to_sysex(self) -> bytes:
-        """Export to 156-byte unpacked DX7 voice data."""
+        """Export to 156-byte unpacked DX7 voice data.
+
+        Every field is clamped to its DX7 range, so an out-of-range value
+        saturates rather than wrapping: ``algorithm = 32`` writes 31, not 0.
+        """
         data = bytearray(156)
 
         # 6 operators (stored in reverse order: OP6 first)
@@ -292,18 +316,18 @@ class Patch:
             data[base + 8] = max(0, min(99, op.breakpoint))
             data[base + 9] = max(0, min(99, op.left_depth))
             data[base + 10] = max(0, min(99, op.right_depth))
-            data[base + 11] = op._left_curve & 0x03
-            data[base + 12] = op._right_curve & 0x03
+            data[base + 11] = max(0, min(3, op._left_curve))
+            data[base + 12] = max(0, min(3, op._right_curve))
 
             # Other parameters
-            data[base + 13] = op.rate_scaling & 0x07
-            data[base + 14] = op.amp_mod_sensitivity & 0x03
-            data[base + 15] = op.velocity_sensitivity & 0x07
+            data[base + 13] = max(0, min(7, op.rate_scaling))
+            data[base + 14] = max(0, min(3, op.amp_mod_sensitivity))
+            data[base + 15] = max(0, min(7, op.velocity_sensitivity))
             data[base + 16] = max(0, min(99, op.output_level))
-            data[base + 17] = op.frequency_mode & 0x01
-            data[base + 18] = op.frequency_coarse & 0x1F
+            data[base + 17] = max(0, min(1, op.frequency_mode))
+            data[base + 18] = max(0, min(31, op.frequency_coarse))
             data[base + 19] = max(0, min(99, op.frequency_fine))
-            data[base + 20] = op.detune & 0x0F
+            data[base + 20] = max(0, min(14, op.detune))
 
         # Pitch envelope
         base = 126
@@ -312,8 +336,8 @@ class Patch:
             data[base + 4 + i] = max(0, min(99, self.pitch_envelope.levels[i]))
 
         # Global parameters
-        data[134] = self.algorithm & 0x1F
-        data[135] = self.feedback & 0x07
+        data[134] = max(0, min(31, self.algorithm))
+        data[135] = max(0, min(7, self.feedback))
         data[136] = 1 if self.osc_key_sync else 0
 
         # LFO
@@ -322,8 +346,8 @@ class Patch:
         data[139] = max(0, min(99, self.lfo.pitch_mod_depth))
         data[140] = max(0, min(99, self.lfo.amp_mod_depth))
         data[141] = 1 if self.lfo.sync else 0
-        data[142] = self.lfo._wave & 0x07
-        data[143] = self.pitch_mod_sensitivity & 0x07
+        data[142] = max(0, min(5, self.lfo._wave))
+        data[143] = max(0, min(7, self.pitch_mod_sensitivity))
 
         # Transpose
         data[144] = max(0, min(48, self.transpose))
@@ -358,49 +382,63 @@ class Patch:
 
     @staticmethod
     def _unpack_voice(packed: bytes) -> bytearray:
-        """Unpack 128-byte voice to 156-byte format."""
+        """Unpack 128-byte voice to 156-byte format.
+
+        Mirrors Dexed's ``Cartridge::unpackProgram``: bit 7 of every packed byte
+        is "don't care" per the sysex spec and is masked off, and the fields
+        with a range narrower than the bits they occupy are normalized rather
+        than passed through. Without that, a corrupt byte reached the engine as
+        a wildly out-of-range parameter.
+        """
         unpacked = bytearray(156)
 
         for op in range(6):
-            # Copy first 11 bytes directly
+            # Envelope, breakpoint, depths and scaling. Dexed normalizes these
+            # and then overwrites the result with a raw copy; match the copy.
             unpacked[op * 21:op * 21 + 11] = packed[op * 17:op * 17 + 11]
 
             # Unpack combined bytes
-            left_right_curves = packed[op * 17 + 11]
+            left_right_curves = packed[op * 17 + 11] & 0x0F
             unpacked[op * 21 + 11] = left_right_curves & 0x03
             unpacked[op * 21 + 12] = (left_right_curves >> 2) & 0x03
 
-            detune_rs = packed[op * 17 + 12]
+            detune_rs = packed[op * 17 + 12] & 0x7F
             unpacked[op * 21 + 13] = detune_rs & 0x07
             unpacked[op * 21 + 20] = detune_rs >> 3
 
-            kvs_ams = packed[op * 17 + 13]
+            kvs_ams = packed[op * 17 + 13] & 0x1F
             unpacked[op * 21 + 14] = kvs_ams & 0x03
             unpacked[op * 21 + 15] = kvs_ams >> 2
 
-            unpacked[op * 21 + 16] = packed[op * 17 + 14]
+            unpacked[op * 21 + 16] = packed[op * 17 + 14] & 0x7F
 
-            fcoarse_mode = packed[op * 17 + 15]
+            fcoarse_mode = packed[op * 17 + 15] & 0x3F
             unpacked[op * 21 + 17] = fcoarse_mode & 0x01
             unpacked[op * 21 + 18] = fcoarse_mode >> 1
 
-            unpacked[op * 21 + 19] = packed[op * 17 + 16]
+            unpacked[op * 21 + 19] = packed[op * 17 + 16] & 0x7F
 
-        # Pitch EG and other globals
-        unpacked[126:135] = packed[102:111]
+        # Pitch EG
+        for i in range(8):
+            unpacked[126 + i] = _normparm(packed[102 + i] & 0x7F, 99)
 
-        oks_fb = packed[111]
+        unpacked[134] = packed[110] & 0x1F
+
+        oks_fb = packed[111] & 0x0F
         unpacked[135] = oks_fb & 0x07
         unpacked[136] = oks_fb >> 3
 
-        unpacked[137:141] = packed[112:116]
+        for i in range(4):
+            unpacked[137 + i] = packed[112 + i] & 0x7F
 
-        lpms_lfw_lks = packed[116]
+        lpms_lfw_lks = packed[116] & 0x7F
         unpacked[141] = lpms_lfw_lks & 0x01
         unpacked[142] = (lpms_lfw_lks >> 1) & 0x07
         unpacked[143] = lpms_lfw_lks >> 4
 
-        unpacked[144:155] = packed[117:128]
+        unpacked[144] = packed[117] & 0x7F
+        for i in range(10):
+            unpacked[145 + i] = packed[118 + i] & 0x7F
         unpacked[155] = 0x3F
 
         return unpacked
@@ -455,39 +493,91 @@ class Patch:
         """
         Load a DX7 bank file (32 voices).
 
-        Supports both raw 4096-byte dumps and standard sysex format.
+        Accepts a standard 4104-byte bulk dump (``F0 43 00 09 20 00`` ... payload
+        ... checksum ``F7``) or a raw 4096-byte payload with no framing. A bulk
+        dump may be preceded by other sysex messages; they are skipped.
+
+        Warns if the dump's checksum does not match, and loads it anyway --
+        cartridge rips often carry a stale checksum.
         """
         with open(filename, "rb") as f:
             data = f.read()
 
-        # Check for sysex header
+        if not data:
+            raise ValueError(f"Bank file is empty: {filename}")
+
         if data[0] == 0xF0:
-            # Standard sysex format: F0 43 00 09 20 00 ... F7
-            if len(data) >= 4104:  # 4096 + 8 byte header/footer
-                data = data[6:6 + 4096]  # Skip header
-            else:
-                raise ValueError(f"Invalid sysex bank file size: {len(data)}")
+            payload = cls._find_bank_message(data, filename)
         elif len(data) < 4096:
             raise ValueError(f"Bank data must be at least 4096 bytes, got {len(data)}")
+        else:
+            payload = data[:4096]
 
         patches = []
         for i in range(32):
-            packed = data[i * 128:(i + 1) * 128]
+            packed = payload[i * 128:(i + 1) * 128]
             patches.append(cls.from_packed(packed))
 
         return patches
 
-    def save_to_bank(self, filename: str, patches: List["Patch"] = None):
-        """Save patches to a bank file. If patches is None, saves just this patch as slot 0."""
-        if patches is None:
-            patches = [self] + [Patch() for _ in range(31)]
+    @staticmethod
+    def _sysex_checksum(payload: bytes) -> int:
+        """DX7 sysex checksum: the low 7 bits of the two's complement sum."""
+        return (-sum(payload)) & 0x7F
 
+    @classmethod
+    def _find_bank_message(cls, data: bytes, filename: str) -> bytes:
+        """Return the 4096-byte payload of the first 32-voice dump in `data`.
+
+        Walks message by message rather than assuming the dump starts at byte
+        zero -- a bank preceded by, say, a device-inquiry reply used to be
+        sliced blindly at [6:4102] and decoded into 32 byte-shifted voices.
+        """
+        pos = 0
+        while pos < len(data) and data[pos] == 0xF0:
+            end = data.find(0xF7, pos)
+            if end == -1:
+                break
+            if end - pos == BANK_SYSEX_SIZE - 1:
+                payload = data[pos + 6:pos + 6 + 4096]
+                expected = data[pos + 4102]
+                actual = cls._sysex_checksum(payload)
+                if actual != expected:
+                    warnings.warn(
+                        f"Bank checksum mismatch in {filename}: "
+                        f"expected 0x{expected:02X}, computed 0x{actual:02X}. "
+                        f"Loading anyway.",
+                        stacklevel=3,
+                    )
+                return payload
+            pos = end + 1
+
+        raise ValueError(
+            f"No 32-voice DX7 bulk dump found in {filename}: expected a "
+            f"{BANK_SYSEX_SIZE}-byte sysex message, got {len(data)} bytes"
+        )
+
+    @classmethod
+    def save_to_bank(cls, filename: str, patches: List["Patch"]):
+        """Save 32 patches to a bank file.
+
+        Mirrors :meth:`load_bank`, so it is called on the class::
+
+            Patch.save_to_bank("my_bank.syx", patches)
+        """
         if len(patches) != 32:
-            raise ValueError("Bank must contain exactly 32 patches")
+            raise ValueError(
+                f"Bank must contain exactly 32 patches, got {len(patches)}"
+            )
 
-        data = bytearray()
+        payload = bytearray()
         for patch in patches:
-            data.extend(patch.to_packed())
+            payload.extend(patch.to_packed())
+
+        data = bytearray(BANK_SYSEX_HEADER)
+        data.extend(payload)
+        data.append(cls._sysex_checksum(payload))
+        data.append(0xF7)
 
         with open(filename, "wb") as f:
             f.write(data)

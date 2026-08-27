@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """Tests for the Patch class and related functionality."""
 
+import os
+
 import numpy as np
 import pytest
 from dexed import (
@@ -147,9 +149,297 @@ class TestOperator:
         op.frequency_mode = 0  # Ratio mode
         assert op.frequency_ratio == 2.0
 
+    @pytest.mark.parametrize(
+        "coarse,fine,expected_hz",
+        [(0, 0, 1.0), (1, 0, 10.0), (2, 0, 100.0), (3, 0, 1000.0),
+         (4, 0, 1.0), (5, 0, 10.0), (2, 30, 199.526231), (1, 50, 31.622777)],
+    )
+    def test_fixed_frequency_matches_engine_formula(self, coarse, fine, expected_hz):
+        """Fixed mode is a decade per coarse unit, a centidecade per fine unit.
+
+        The engine computes 10 ** ((coarse & 3) + fine / 100); only the low two
+        bits of coarse are used, so coarse 4 wraps back to 1 Hz.
+        """
+        op = Operator()
+        op.frequency_mode = 1
+        op.frequency_coarse = coarse
+        op.frequency_fine = fine
+        assert op.frequency_ratio == pytest.approx(expected_hz)
+
+    @pytest.mark.parametrize("coarse,fine", [(2, 0), (3, 0), (2, 30)])
+    def test_fixed_frequency_matches_rendered_audio(self, coarse, fine):
+        """The reported frequency must be the one the synth actually renders."""
+        sample_rate = 44100.0
+        patch = Patch()
+        patch.algorithm = 31  # all six operators are carriers
+        for i in range(6):
+            patch.op[i].output_level = 99 if i == 0 else 0
+            patch.op[i].envelope.rates = [99, 99, 99, 99]
+            patch.op[i].envelope.levels = [99, 99, 99, 0]
+        patch.op[0].frequency_mode = 1
+        patch.op[0].frequency_coarse = coarse
+        patch.op[0].frequency_fine = fine
+
+        synth = DexedSynth(sample_rate=sample_rate)
+        synth.load_patch(patch)
+        audio = synth.render(
+            midi_note=60, velocity=99, note_duration=0.5, render_duration=0.5
+        )
+
+        window = audio[2000:2000 + 16384]
+        spectrum = np.abs(np.fft.rfft(window * np.hanning(len(window))))
+        peak_hz = np.fft.rfftfreq(len(window), 1.0 / sample_rate)[np.argmax(spectrum)]
+
+        bin_width = sample_rate / len(window)
+        assert peak_hz == pytest.approx(patch.op[0].frequency_ratio, abs=2 * bin_width)
+
+
+class TestBankIO:
+    """Tests for reading and writing 32-voice bank files."""
+
+    def test_save_to_bank_is_callable_on_the_class(self, tmp_path):
+        """The documented call is Patch.save_to_bank(filename, patches).
+
+        It used to be an instance method, so the documented form bound self to
+        the filename and raised AttributeError without writing anything.
+        """
+        patches = [Patch(name=f"VOICE{i:02d}") for i in range(32)]
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), patches)
+        assert path.exists()
+
+    def test_bank_round_trip_preserves_every_voice(self, tmp_path):
+        patches = []
+        for i in range(32):
+            patch = Patch(name=f"VOICE{i:02d}")
+            patch.algorithm = i
+            patch.feedback = i % 8
+            patches.append(patch)
+
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), patches)
+        loaded = Patch.load_bank(str(path))
+
+        assert len(loaded) == 32
+        for original, restored in zip(patches, loaded):
+            assert restored.name == original.name
+            assert restored.algorithm == original.algorithm
+            assert restored.feedback == original.feedback
+
+    def test_wrong_patch_count_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="exactly 32"):
+            Patch.save_to_bank(str(tmp_path / "bank.syx"), [Patch()])
+
+    def test_leading_and_trailing_spaces_in_names_survive(self, tmp_path):
+        """Names are 10 bytes wide; stripping them rewrote the file.
+
+        Round-tripping Dexed's own factory banks used to change the name bytes
+        of voices like ' -RHODES- ' and ' THE  FIX '.
+        """
+        names = ["  CIRRUS  ", " -RHODES- ", "E.PIANO 1 ", "          "]
+        patches = [Patch(name=names[i % len(names)]) for i in range(32)]
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), patches)
+        first = path.read_bytes()
+
+        reloaded = Patch.load_bank(str(path))
+        assert [p.name for p in reloaded] == [p.name for p in patches]
+        assert all(len(p.name) == 10 for p in reloaded)
+
+        again = tmp_path / "bank2.syx"
+        Patch.save_to_bank(str(again), reloaded)
+        assert again.read_bytes() == first
+
+    def test_high_bit_name_bytes_are_masked_not_replaced(self):
+        """Dexed masks name bytes with 0x7F; we used to emit U+FFFD."""
+        data = bytearray(Patch(name="ABCDEFGHIJ").to_sysex())
+        data[145] = ord("E") | 0x80
+        assert Patch.from_sysex(bytes(data)).name == "EBCDEFGHIJ"
+
+    def test_saved_bank_is_a_real_bulk_dump(self, tmp_path):
+        """A .syx file has to be sendable to a DX7, not a bare payload."""
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), [Patch() for _ in range(32)])
+
+        data = path.read_bytes()
+        assert len(data) == 4104
+        assert data[:6] == bytes([0xF0, 0x43, 0x00, 0x09, 0x20, 0x00])
+        assert data[4103] == 0xF7
+        assert data[4102] == (-sum(data[6:4102])) & 0x7F
+
+    def test_raw_4096_byte_payload_still_loads(self, tmp_path):
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), [Patch(name=f"V{i:02d}") for i in range(32)])
+        raw = tmp_path / "raw.bin"
+        raw.write_bytes(path.read_bytes()[6:4102])
+        assert Patch.load_bank(str(raw))[3].name.strip() == "V03"
+
+    def test_bank_preceded_by_another_sysex_message_is_found(self, tmp_path):
+        """A bank used to be sliced blindly at [6:4102] and decoded as garbage."""
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), [Patch(name=f"V{i:02d}") for i in range(32)])
+        prefixed = tmp_path / "prefixed.syx"
+        inquiry = bytes([0xF0, 0x7E, 0x00, 0x06, 0x02, 0xF7])
+        prefixed.write_bytes(inquiry + path.read_bytes())
+
+        assert Patch.load_bank(str(prefixed))[3].name.strip() == "V03"
+
+    def test_bad_checksum_warns_but_still_loads(self, tmp_path):
+        path = tmp_path / "bank.syx"
+        Patch.save_to_bank(str(path), [Patch(name="VOICE") for _ in range(32)])
+        data = bytearray(path.read_bytes())
+        data[4102] ^= 0x7F
+        path.write_bytes(bytes(data))
+
+        with pytest.warns(UserWarning, match="checksum mismatch"):
+            patches = Patch.load_bank(str(path))
+        assert patches[0].name.strip() == "VOICE"
+
+    def test_empty_file_is_rejected(self, tmp_path):
+        path = tmp_path / "empty.syx"
+        path.write_bytes(b"")
+        with pytest.raises(ValueError, match="empty"):
+            Patch.load_bank(str(path))
+
+    def test_unrelated_sysex_is_rejected(self, tmp_path):
+        path = tmp_path / "junk.syx"
+        path.write_bytes(bytes([0xF0]) + bytes(5000))
+        with pytest.raises(ValueError, match="No 32-voice DX7 bulk dump"):
+            Patch.load_bank(str(path))
+
+
+class TestLFOWaveRange:
+    """The LFO wave field is 3 bits wide but only 0-5 are valid waves."""
+
+    @pytest.mark.parametrize("raw_wave", range(8))
+    def test_every_encodable_wave_value_is_readable(self, raw_wave):
+        """6 and 7 used to reach LFO._wave and blow up the .wave property.
+
+        from_raw is the realistic trigger for an ML-oriented package: a
+        generated or perturbed parameter array hits an invalid wave 2 times in
+        8, and the bad state persisted silently until someone read .wave.
+        """
+        data = bytearray(Patch().to_sysex())
+        data[142] = raw_wave
+        patch = Patch.from_sysex(bytes(data))
+        from dexed.patch import LFO_WAVE_INDEX_TO_NAME
+
+        assert patch.lfo.wave in LFO_WAVE_INDEX_TO_NAME
+        assert 0 <= patch.lfo._wave <= 5
+
+    def test_invalid_wave_in_a_packed_voice_is_clamped(self):
+        packed = bytearray(Patch().to_packed())
+        packed[116] = (packed[116] & ~0x0E) | (7 << 1)
+        assert Patch.from_packed(bytes(packed)).lfo._wave == 5
+
+    def test_invalid_wave_in_a_raw_array_is_clamped(self):
+        raw = Patch().to_raw()
+        raw[142] = 6
+        assert Patch.from_raw(raw).lfo.wave == "s&h"
+
+
+class TestPackedVoiceUnpacking:
+    """_unpack_voice must match Dexed's Cartridge::unpackProgram."""
+
+    @staticmethod
+    def _packed(**overrides):
+        packed = bytearray(Patch(name="INIT VOICE").to_packed())
+        for index, value in overrides.items():
+            packed[int(index[1:])] = value
+        return bytes(packed)
+
+    def test_pitch_eg_bytes_are_normalized(self):
+        """Dexed rescales an out-of-range byte; we passed it straight through.
+
+        Byte 102 = 200 used to give pitch_envelope.rates[0] = 200, and a
+        to_preset() value of 2.02 in a field documented as [0, 1]. Dexed masks
+        bit 7 first, so 200 becomes 72, and only what is still out of range
+        after that is rescaled.
+        """
+        assert Patch.from_packed(self._packed(b102=200)).pitch_envelope.rates[0] == 72
+        # 127 survives the mask and is still out of range, so it is rescaled
+        assert Patch.from_packed(self._packed(b102=127)).pitch_envelope.rates[0] == 49
+
+    def test_in_range_pitch_eg_bytes_are_untouched(self):
+        patch = Patch.from_packed(self._packed(b102=64))
+        assert patch.pitch_envelope.rates[0] == 64
+
+    def test_transpose_is_masked_to_seven_bits(self):
+        patch = Patch.from_packed(self._packed(b117=184))
+        assert patch.transpose == 184 & 0x7F
+
+    def test_dont_care_bits_are_dropped(self):
+        """Bits the sysex spec marks "don't care" must not leak into fields."""
+        # op 0 is DX7 OP1, stored last: packed offset 5 * 17
+        base = 5 * 17
+        packed = bytearray(Patch().to_packed())
+        packed[base + 13] = 0x7F          # kvs/ams: only the low 5 bits count
+        packed[base + 15] = 0xFF          # coarse/mode: only the low 6 bits
+        packed[base + 12] = 0xFF          # detune/rate scaling: low 7 bits
+        patch = Patch.from_packed(bytes(packed))
+
+        assert patch.op[0].amp_mod_sensitivity == 0x1F & 0x03
+        assert patch.op[0].velocity_sensitivity == (0x1F >> 2) & 0x07
+        assert patch.op[0].frequency_coarse == (0x3F >> 1)
+        assert patch.op[0].detune == (0x7F >> 3) & 0x0F
+
+    def test_factory_banks_round_trip(self, tmp_path):
+        """Every voice in Dexed's own banks must survive load -> save."""
+        import zipfile
+
+        archive = "/Users/braun/GitHub/dexed/assets/builtin_pgm.zip"
+        if not os.path.exists(archive):
+            pytest.skip("Dexed factory banks not available")
+
+        checked = 0
+        with zipfile.ZipFile(archive) as bundle:
+            for name in [n for n in bundle.namelist() if n.lower().endswith(".syx")][:8]:
+                path = tmp_path / "bank.syx"
+                path.write_bytes(bundle.read(name))
+                for patch in Patch.load_bank(str(path)):
+                    assert len(patch.to_packed()) == 128
+                    assert len(patch.name) == 10
+                    checked += 1
+        assert checked > 0
+
 
 class TestSysexConversion:
     """Tests for sysex format conversion."""
+
+    @pytest.mark.parametrize(
+        "field,value,index,expected",
+        [("algorithm", 32, 134, 31), ("algorithm", -1, 134, 0),
+         ("feedback", 8, 135, 7), ("pitch_mod_sensitivity", 9, 143, 7),
+         ("transpose", 60, 144, 48)],
+    )
+    def test_out_of_range_globals_saturate(self, field, value, index, expected):
+        """An out-of-range value must saturate, not wrap around to zero.
+
+        These fields used to be written with a bit mask, so algorithm 32 came
+        out as algorithm 0 and maximum feedback came out as none at all.
+        """
+        patch = Patch()
+        setattr(patch, field, value)
+        assert patch.to_sysex()[index] == expected
+
+    @pytest.mark.parametrize(
+        "field,value,offset,expected",
+        [("rate_scaling", 8, 13, 7), ("amp_mod_sensitivity", 4, 14, 3),
+         ("velocity_sensitivity", 8, 15, 7), ("frequency_coarse", 32, 18, 31),
+         ("detune", 15, 20, 14)],
+    )
+    def test_out_of_range_operator_fields_saturate(self, field, value, offset, expected):
+        patch = Patch()
+        setattr(patch.op[0], field, value)
+        # op 0 is DX7 OP1, which sysex stores last
+        assert patch.to_sysex()[5 * 21 + offset] == expected
+
+    def test_out_of_range_algorithm_reaches_the_synth_as_31(self):
+        patch = Patch()
+        patch.algorithm = 32
+        synth = DexedSynth()
+        synth.load_patch(patch)
+        assert synth.algorithm == 31
 
     def test_to_sysex_length(self):
         """Test that to_sysex returns 156 bytes."""
@@ -253,8 +543,9 @@ class TestSynthWithPatch:
         for i in range(32):
             alg = algorithms[i]
             assert alg.number == i
-            assert isinstance(alg.carriers, list)
-            assert isinstance(alg.modulators, list)
+            # The shared table hands out immutable tuples
+            assert isinstance(alg.carriers, tuple)
+            assert isinstance(alg.modulators, tuple)
 
     def test_algorithms_invalid(self):
         """Test that invalid algorithm numbers raise errors."""
@@ -270,8 +561,30 @@ class TestSynthWithPatch:
         assert 2 in algorithms[0].carriers
 
         # Algorithm 31: all operators are carriers
-        assert algorithms[31].carriers == [0, 1, 2, 3, 4, 5]
-        assert algorithms[31].modulators == []
+        assert algorithms[31].carriers == (0, 1, 2, 3, 4, 5)
+        assert algorithms[31].modulators == ()
+
+    def test_the_shared_table_cannot_be_corrupted(self):
+        """get_carriers used to hand out the module-level list itself.
+
+        Appending to it poisoned the algorithm table for the whole process, and
+        the next OperatorGraph.from_algorithm raised "Carrier must be 0-5".
+        """
+        carriers = get_carriers(0)
+        carriers.append(7)
+        assert get_carriers(0) == [0, 2]
+        assert 7 not in algorithms[0].carriers
+
+        modulators = get_modulators(0)
+        modulators.clear()
+        assert get_modulators(0) == [1, 3, 4, 5]
+
+        with pytest.raises(ValueError):
+            algorithms[15].mod_matrix[3, 3] = 1
+        assert get_mod_matrix(15)[3, 3] == 0
+
+        with pytest.raises(Exception):
+            algorithms[0].carriers = (0,)
 
     def test_mod_matrix_shape(self):
         """Test modulation matrix shape."""

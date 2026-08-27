@@ -405,14 +405,13 @@ class GraphOperator:
         return coarse * fine
 
     def _fixed_frequency(self) -> float:
-        """Compute fixed frequency in Hz."""
-        base_freqs = [1, 10, 100, 1000]
-        coarse = self.frequency_coarse
-        power = coarse // 4
-        mult = (coarse % 4) + 1
-        base = base_freqs[min(power, 3)]
-        fine = 1.0 + self.frequency_fine / 100.0
-        return base * mult * fine
+        """Compute fixed frequency in Hz.
+
+        Matches ``_compute_osc_freq``'s fixed-mode branch: a decade per unit of
+        the low two coarse bits, a hundredth of a decade per unit of fine.
+        Detune is excluded, as it is in ratio mode.
+        """
+        return 10.0 ** ((self.frequency_coarse & 3) + self.frequency_fine / 100.0)
 
 
 # =============================================================================
@@ -476,11 +475,21 @@ class OperatorGraph:
 
         Returns:
             self for method chaining
+
+        Raises:
+            ValueError: if source == target. An operator modulating itself is
+                feedback, which carries a one-sample delay and a 0-7 level;
+                use :meth:`set_feedback` for it.
         """
         if not 0 <= source < self.num_ops:
             raise ValueError(f"Source must be 0-{self.num_ops - 1}, got {source}")
         if not 0 <= target < self.num_ops:
             raise ValueError(f"Target must be 0-{self.num_ops - 1}, got {target}")
+        if source == target:
+            raise ValueError(
+                f"Operator {source} cannot modulate itself through connect(); "
+                f"use set_feedback({source}, {source}, level) instead"
+            )
 
         self._mod_matrix[target, source] = amount
         return self
@@ -513,18 +522,30 @@ class OperatorGraph:
             source: Source operator index (0-indexed) whose output is fed back
             target: Target operator index (0-indexed) that receives feedback.
                 Same as source for self-feedback.
-            level: Feedback level 0-7 (0 disables, 7 is maximum)
+            level: Feedback level 0-7 (0 disables, 7 is maximum). Must be an
+                integer -- the render loop uses it as a bit shift.
 
         Returns:
             self for method chaining
+
+        Raises:
+            ValueError: if an operator index or the level is out of range.
+            TypeError: if level is not an integer.
         """
         if not 0 <= source < self.num_ops:
             raise ValueError(f"Source operator must be 0-{self.num_ops - 1}, got {source}")
         if not 0 <= target < self.num_ops:
             raise ValueError(f"Target operator must be 0-{self.num_ops - 1}, got {target}")
+        if isinstance(level, bool) or not isinstance(level, (int, np.integer)):
+            raise TypeError(
+                f"Feedback level must be an integer 0-7, got {level!r}"
+            )
+        if not 0 <= level <= 7:
+            raise ValueError(f"Feedback level must be 0-7, got {level}")
+
         edge = (source, target)
         if level > 0:
-            self._feedback[edge] = min(7, max(0, level))
+            self._feedback[edge] = int(level)
         elif edge in self._feedback:
             del self._feedback[edge]
         return self
@@ -761,7 +782,16 @@ class OperatorGraph:
         return chain
 
     def _compute_processing_order(self) -> List[int]:
-        """Compute operator processing order via topological sort."""
+        """Compute operator processing order via topological sort.
+
+        Raises:
+            ValueError: if the modulation matrix contains a cycle. A cycle has
+                no valid order -- whichever operator is computed first reads the
+                other's previous sample -- so it used to fall back to bare index
+                order, which also delayed edges that were in no cycle at all.
+                Feedback is the supported way to close a loop; it has explicit
+                one-sample-delay semantics and a 0-7 level.
+        """
         dependencies: Dict[int, Set[int]] = {i: set() for i in range(self.num_ops)}
 
         for target in range(self.num_ops):
@@ -783,7 +813,12 @@ class OperatorGraph:
                         queue.append(target)
 
         remaining = [i for i in range(self.num_ops) if i not in order]
-        order.extend(remaining)
+        if remaining:
+            raise ValueError(
+                f"Modulation matrix has a cycle: operators {remaining} cannot "
+                f"be ordered. Use set_feedback(source, target, level) to close "
+                f"a loop."
+            )
 
         return order
 
@@ -1158,15 +1193,28 @@ class OperatorGraph:
         Create an operator graph from a modulation matrix.
 
         Args:
-            mod_matrix: NxN array where [i,j] = amount op j modulates op i
+            mod_matrix: NxN array where [i,j] = amount op j modulates op i.
+                The diagonal must be zero -- self-modulation is feedback, which
+                the render loop applies with a one-sample delay and a 0-7 level.
             carriers: List of carrier operator indices (0-indexed)
             feedback: Optional dict of {(source, target): level} for feedback (level 0-7)
 
         Returns:
             OperatorGraph instance
+
+        Raises:
+            ValueError: if mod_matrix is not square, or its diagonal is nonzero.
         """
         if mod_matrix.ndim != 2 or mod_matrix.shape[0] != mod_matrix.shape[1]:
             raise ValueError("mod_matrix must be square")
+
+        diagonal = np.nonzero(np.diagonal(mod_matrix))[0]
+        if diagonal.size:
+            raise ValueError(
+                f"mod_matrix diagonal must be zero, got nonzero entries at "
+                f"{diagonal.tolist()}; use feedback={{(i, i): level}} for "
+                f"self-modulation"
+            )
 
         num_ops = mod_matrix.shape[0]
         graph = cls(num_ops=num_ops)

@@ -65,5 +65,21 @@
 ```
 
 ```{eval-rst}
+.. autofunction:: dexed.get_feedback_edge
+```
+
+```{eval-rst}
+.. autoclass:: dexed.algorithms.Algorithm
+   :no-members:
+```
+
+```{eval-rst}
 .. autodata:: dexed.algorithms
 ```
+
+### The 32 DX7 algorithms
+
+![The 32 DX7 algorithms](dx7_algorithms.svg)
+
+Operator indices in the API above are 0-based, so operator `i` is the box
+numbered `i + 1`, and algorithm index 0 is DX7 algorithm 1.

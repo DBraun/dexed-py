@@ -205,7 +205,8 @@ void EngineMkI::compute_fb(int32_t *output, int32_t phase0, int32_t freq,
 }
 
 // exclusively used for ALGO 6 with feedback
-void EngineMkI::compute_fb2(int32_t *output, FmOpParams *parms, int32_t gain01, int32_t gain02, int32_t *fb_buf, int fb_shift) {
+void EngineMkI::compute_fb2(int32_t *output, FmOpParams *parms, int32_t gain01, int32_t gain02, int32_t *fb_buf, int fb_shift,
+                            int32_t *stage0) {
     int32_t dgain[2];
     int32_t gain[2];
     int32_t phase[2];
@@ -231,6 +232,7 @@ void EngineMkI::compute_fb2(int32_t *output, FmOpParams *parms, int32_t gain01, 
         y0 = y;
         y = mkiSin(phase[0]+scaled_fb, gain[0]);
         phase[0] += parms[0].freq;
+        if (stage0) stage0[i] = y;
         
         // op 1
         gain[1] += dgain[1];
@@ -244,7 +246,8 @@ void EngineMkI::compute_fb2(int32_t *output, FmOpParams *parms, int32_t gain01, 
 }
 
 // exclusively used for ALGO 4 with feedback
-void EngineMkI::compute_fb3(int32_t *output, FmOpParams *parms, int32_t gain01, int32_t gain02, int32_t *fb_buf, int fb_shift) {
+void EngineMkI::compute_fb3(int32_t *output, FmOpParams *parms, int32_t gain01, int32_t gain02, int32_t *fb_buf, int fb_shift,
+                            int32_t *stage0, int32_t *stage1) {
     int32_t dgain[3];
     int32_t gain[3];
     int32_t phase[3];
@@ -275,11 +278,13 @@ void EngineMkI::compute_fb3(int32_t *output, FmOpParams *parms, int32_t gain01, 
         y0 = y;
         y = mkiSin(phase[0]+scaled_fb, gain[0]);
         phase[0] += parms[0].freq;
+        if (stage0) stage0[i] = y;
         
         // op 1
         gain[1] += dgain[1];
         y = mkiSin(phase[1]+y, gain[1]);
         phase[1] += parms[1].freq;
+        if (stage1) stage1[i] = y;
         
         // op 2
         gain[2] += dgain[2];

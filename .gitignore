@@ -48,6 +48,8 @@ venv/
 
 # Docs build
 docs/_build/
+# Drawn from src/msfa/fm_core.cc by docs/conf.py on every build
+docs/dx7_algorithms.svg
 
 # nanobind build
 nanobind/build/

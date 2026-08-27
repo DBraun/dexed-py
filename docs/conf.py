@@ -56,6 +56,27 @@ intersphinx_mapping = {
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 
+def _draw_algorithm_chart(app):
+    """Redraw dx7_algorithms.svg before the sources are read.
+
+    The chart is generated from the engine's own routing table, so it is built
+    here rather than committed -- a checked-in copy can fall out of step with
+    src/msfa/fm_core.cc, and it churns a 1400-line diff on every layout tweak.
+    Doing it at builder-inited, rather than in CI, keeps a local `make html`
+    working too.
+    """
+    import importlib.util
+
+    generator = Path(__file__).parent / "make_algorithm_chart.py"
+    spec = importlib.util.spec_from_file_location("make_algorithm_chart", generator)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    out = Path(__file__).parent / "dx7_algorithms.svg"
+    out.write_text(module.render_chart(), encoding="utf-8")
+    print(f"[chart] wrote {out.name}")
+
+
 # Override sphinx-llm's auto-generated llms.txt with our hand-written version.
 # sphinx-llm runs at build-finished priority 101; we run at 200 to copy after it.
 def _override_llms_txt(app, exception):
@@ -68,4 +89,5 @@ def _override_llms_txt(app, exception):
 
 
 def setup(app):
+    app.connect("builder-inited", _draw_algorithm_chart)
     app.connect("build-finished", _override_llms_txt, priority=200)

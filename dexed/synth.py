@@ -27,6 +27,11 @@ class DexedSynth:
         preset = Preset(algorithm=15, feedback=0.5)
         synth.load_preset(preset)
         audio = synth.render(midi_note=60)
+
+    A synth may be shared between threads: loading and rendering are
+    serialized per instance, and the GIL is released while audio is
+    computed. For parallel rendering, give each thread its own synth so the
+    work actually overlaps.
     """
 
     def __init__(self, sample_rate: float = 44100.0):

@@ -68,5 +68,52 @@ def test_different_algorithms():
         assert ops_audio.dtype == np.float32
 
 
+@pytest.mark.parametrize("algo", range(32))
+@pytest.mark.parametrize("feedback", [0, 7])
+def test_every_audible_operator_has_a_channel(algo, feedback):
+    """No operator that is producing sound may come back as silence.
+
+    DX7 algorithms 4 and 6 collapse their feedback chain into a single loop,
+    and the operators inside it used to be left at zero.
+    """
+    patch = dexed.Patch()
+    patch.algorithm = algo
+    patch.feedback = feedback
+    for i in range(6):
+        patch.op[i].output_level = 99
+        patch.op[i].envelope.rates = [99, 99, 99, 99]
+        patch.op[i].envelope.levels = [99, 99, 99, 0]
+
+    synth = dexed.DexedSynth()
+    synth.load_patch(patch)
+    ops_audio = synth.render_all_ops(midi_note=60, velocity=100,
+                                     note_duration=0.05, render_duration=0.1)
+
+    silent = [i for i in range(6) if not np.any(ops_audio[i])]
+    assert silent == [], f"algorithm {algo}, feedback {feedback}: silent channels {silent}"
+
+
+@pytest.mark.parametrize("algo", range(32))
+@pytest.mark.parametrize("feedback", [0, 7])
+def test_carrier_channels_sum_to_the_mix(algo, feedback):
+    """The mix is the sum of the carriers the algorithm table names."""
+    patch = dexed.Patch()
+    patch.algorithm = algo
+    patch.feedback = feedback
+    for i in range(6):
+        patch.op[i].output_level = 99
+        patch.op[i].envelope.rates = [99, 99, 99, 99]
+        patch.op[i].envelope.levels = [99, 99, 99, 0]
+
+    synth = dexed.DexedSynth()
+    synth.load_patch(patch)
+    ops_audio = synth.render_all_ops(midi_note=60, velocity=100,
+                                     note_duration=0.05, render_duration=0.1)
+
+    carriers = dexed.get_carriers(algo)
+    error = np.abs(ops_audio[carriers].sum(axis=0) - ops_audio[6]).max()
+    assert error < 1e-6, f"algorithm {algo}, feedback {feedback}: mix error {error}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
