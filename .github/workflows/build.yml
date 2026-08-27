@@ -26,7 +26,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         submodules: recursive
         fetch-depth: 0
@@ -54,7 +54,7 @@ jobs:
         CIBW_ARCHS: auto64
         CIBW_ARCHS_LINUX: auto64
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: artifact-${{ matrix.cibwbuild }}
         path: ./wheelhouse/*.whl
@@ -72,7 +72,7 @@ jobs:
         - { os: macos-14, build: cp314t-macosx_arm64, python-version: "3.14t", ARCHS: "arm64" }
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
         fetch-depth: 0
@@ -92,7 +92,7 @@ jobs:
         CIBW_ARCHS_MACOS: ${{matrix.ARCHS}}
         CIBW_ENVIRONMENT_MACOS: CMAKE_OSX_ARCHITECTURES="${{matrix.ARCHS}}"
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: artifact-macos-${{ matrix.build }}
         path: ./wheelhouse/*.whl
@@ -110,13 +110,13 @@ jobs:
         - { os: windows-2022, python-version: "3.14t", CIBW-BUILD: "cp314t*" }
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
         fetch-depth: 0
 
     - name: Setup Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -132,7 +132,7 @@ jobs:
         CIBW_ARCHS: auto64
         CIBW_BUILD: ${{matrix.CIBW-BUILD}}
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: artifact-windows-${{ matrix.python-version }}
         path: ./wheelhouse/*.whl
@@ -149,15 +149,15 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: artifact-cp312-manylinux_x86_64
           path: dist
@@ -170,13 +170,13 @@ jobs:
       - name: Build docs
         run: cd docs && make html
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/_build/html
 
       - name: Deploy to GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   upload-pypi:
     needs: [build-windows, build-ubuntu, build-macos]
@@ -186,7 +186,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: artifact-*
           merge-multiple: true
