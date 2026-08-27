@@ -475,11 +475,21 @@ class OperatorGraph:
 
         Returns:
             self for method chaining
+
+        Raises:
+            ValueError: if source == target. An operator modulating itself is
+                feedback, which carries a one-sample delay and a 0-7 level;
+                use :meth:`set_feedback` for it.
         """
         if not 0 <= source < self.num_ops:
             raise ValueError(f"Source must be 0-{self.num_ops - 1}, got {source}")
         if not 0 <= target < self.num_ops:
             raise ValueError(f"Target must be 0-{self.num_ops - 1}, got {target}")
+        if source == target:
+            raise ValueError(
+                f"Operator {source} cannot modulate itself through connect(); "
+                f"use set_feedback({source}, {source}, level) instead"
+            )
 
         self._mod_matrix[target, source] = amount
         return self
@@ -1157,15 +1167,28 @@ class OperatorGraph:
         Create an operator graph from a modulation matrix.
 
         Args:
-            mod_matrix: NxN array where [i,j] = amount op j modulates op i
+            mod_matrix: NxN array where [i,j] = amount op j modulates op i.
+                The diagonal must be zero -- self-modulation is feedback, which
+                the render loop applies with a one-sample delay and a 0-7 level.
             carriers: List of carrier operator indices (0-indexed)
             feedback: Optional dict of {(source, target): level} for feedback (level 0-7)
 
         Returns:
             OperatorGraph instance
+
+        Raises:
+            ValueError: if mod_matrix is not square, or its diagonal is nonzero.
         """
         if mod_matrix.ndim != 2 or mod_matrix.shape[0] != mod_matrix.shape[1]:
             raise ValueError("mod_matrix must be square")
+
+        diagonal = np.nonzero(np.diagonal(mod_matrix))[0]
+        if diagonal.size:
+            raise ValueError(
+                f"mod_matrix diagonal must be zero, got nonzero entries at "
+                f"{diagonal.tolist()}; use feedback={{(i, i): level}} for "
+                f"self-modulation"
+            )
 
         num_ops = mod_matrix.shape[0]
         graph = cls(num_ops=num_ops)

@@ -161,6 +161,34 @@ class TestGraphFromAlgorithm:
             assert set(graph.carriers) == set(alg.carriers)
 
 
+class TestSelfModulationIsRejected:
+    """connect(i, i) was stored, reported everywhere, and silently ignored."""
+
+    def test_connect_to_self_raises(self):
+        graph = OperatorGraph(num_ops=3)
+        with pytest.raises(ValueError, match="set_feedback"):
+            graph.connect(0, 0, 1.0)
+        assert not graph.is_connected(0, 0)
+
+    def test_from_matrix_rejects_a_nonzero_diagonal(self):
+        matrix = np.zeros((3, 3), dtype=np.float32)
+        matrix[1, 0] = 1.0
+        matrix[2, 2] = 1.0
+        with pytest.raises(ValueError, match="diagonal"):
+            OperatorGraph.from_matrix(matrix, carriers=[0])
+
+    def test_from_matrix_accepts_a_zero_diagonal(self):
+        matrix = np.zeros((3, 3), dtype=np.float32)
+        matrix[0, 1] = 1.0
+        graph = OperatorGraph.from_matrix(matrix, carriers=[0])
+        assert graph.is_connected(1, 0)
+
+    def test_self_modulation_goes_through_set_feedback(self):
+        graph = OperatorGraph(num_ops=3)
+        graph.set_feedback(0, 0, level=7)
+        assert graph.get_feedback(0, 0) == 7
+
+
 class TestGraphFromMatrix:
     """Tests for creating graphs from modulation matrices."""
 

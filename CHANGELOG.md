@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   out-of-spec byte used to be handed through verbatim: packed byte 102 = 200
   gave `pitch_envelope.rates[0] = 200` and a `to_preset()` value of 2.02 in a
   field documented as `[0, 1]`, where Dexed yields 72.
+- `OperatorGraph.connect(i, i)` and a nonzero diagonal passed to
+  `OperatorGraph.from_matrix()` now raise instead of being stored, reported by
+  every query method, and then skipped by both render loops. Self-modulation is
+  feedback: use `set_feedback(i, i, level)`.
 - Sharing a `DexedSynth` between threads no longer crashes the interpreter.
   Loading and rendering are now serialized per instance.
 - Creating a second `DexedSynth` at a different sample rate no longer retunes
