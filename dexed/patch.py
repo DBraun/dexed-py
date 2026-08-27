@@ -281,7 +281,7 @@ class Patch:
         patch.lfo.pitch_mod_depth = data[139]
         patch.lfo.amp_mod_depth = data[140]
         patch.lfo.sync = bool(data[141] & 0x01)
-        patch.lfo._wave = data[142] & 0x07
+        patch.lfo.wave = data[142] & 0x07  # setter clamps 6-7 to the top wave
         patch.pitch_mod_sensitivity = data[143] & 0x07
 
         # Transpose

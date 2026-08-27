@@ -68,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and used to index the 32-entry algorithm table, and byte 135 >= 10 gave the
   feedback kernels a negative shift count. Not reachable through the public
   `DexedSynth`, which always passes `Patch.to_sysex()`.
+- Loading a patch whose LFO wave field holds 6 or 7 no longer leaves `.wave`
+  raising `IndexError`. The 3-bit field encodes only six waves, so the parse
+  paths now clamp, as `to_sysex()` already did on the way out.
 - Sharing a `DexedSynth` between threads no longer crashes the interpreter.
   Loading and rendering are now serialized per instance.
 - Creating a second `DexedSynth` at a different sample rate no longer retunes

@@ -308,6 +308,36 @@ class TestBankIO:
             Patch.load_bank(str(path))
 
 
+class TestLFOWaveRange:
+    """The LFO wave field is 3 bits wide but only 0-5 are valid waves."""
+
+    @pytest.mark.parametrize("raw_wave", range(8))
+    def test_every_encodable_wave_value_is_readable(self, raw_wave):
+        """6 and 7 used to reach LFO._wave and blow up the .wave property.
+
+        from_raw is the realistic trigger for an ML-oriented package: a
+        generated or perturbed parameter array hits an invalid wave 2 times in
+        8, and the bad state persisted silently until someone read .wave.
+        """
+        data = bytearray(Patch().to_sysex())
+        data[142] = raw_wave
+        patch = Patch.from_sysex(bytes(data))
+        from dexed.patch import LFO_WAVE_INDEX_TO_NAME
+
+        assert patch.lfo.wave in LFO_WAVE_INDEX_TO_NAME
+        assert 0 <= patch.lfo._wave <= 5
+
+    def test_invalid_wave_in_a_packed_voice_is_clamped(self):
+        packed = bytearray(Patch().to_packed())
+        packed[116] = (packed[116] & ~0x0E) | (7 << 1)
+        assert Patch.from_packed(bytes(packed)).lfo._wave == 5
+
+    def test_invalid_wave_in_a_raw_array_is_clamped(self):
+        raw = Patch().to_raw()
+        raw[142] = 6
+        assert Patch.from_raw(raw).lfo.wave == "s&h"
+
+
 class TestPackedVoiceUnpacking:
     """_unpack_voice must match Dexed's Cartridge::unpackProgram."""
 
