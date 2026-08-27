@@ -275,7 +275,11 @@ class Patch:
         return patch
 
     def to_sysex(self) -> bytes:
-        """Export to 156-byte unpacked DX7 voice data."""
+        """Export to 156-byte unpacked DX7 voice data.
+
+        Every field is clamped to its DX7 range, so an out-of-range value
+        saturates rather than wrapping: ``algorithm = 32`` writes 31, not 0.
+        """
         data = bytearray(156)
 
         # 6 operators (stored in reverse order: OP6 first)
@@ -292,18 +296,18 @@ class Patch:
             data[base + 8] = max(0, min(99, op.breakpoint))
             data[base + 9] = max(0, min(99, op.left_depth))
             data[base + 10] = max(0, min(99, op.right_depth))
-            data[base + 11] = op._left_curve & 0x03
-            data[base + 12] = op._right_curve & 0x03
+            data[base + 11] = max(0, min(3, op._left_curve))
+            data[base + 12] = max(0, min(3, op._right_curve))
 
             # Other parameters
-            data[base + 13] = op.rate_scaling & 0x07
-            data[base + 14] = op.amp_mod_sensitivity & 0x03
-            data[base + 15] = op.velocity_sensitivity & 0x07
+            data[base + 13] = max(0, min(7, op.rate_scaling))
+            data[base + 14] = max(0, min(3, op.amp_mod_sensitivity))
+            data[base + 15] = max(0, min(7, op.velocity_sensitivity))
             data[base + 16] = max(0, min(99, op.output_level))
-            data[base + 17] = op.frequency_mode & 0x01
-            data[base + 18] = op.frequency_coarse & 0x1F
+            data[base + 17] = max(0, min(1, op.frequency_mode))
+            data[base + 18] = max(0, min(31, op.frequency_coarse))
             data[base + 19] = max(0, min(99, op.frequency_fine))
-            data[base + 20] = op.detune & 0x0F
+            data[base + 20] = max(0, min(14, op.detune))
 
         # Pitch envelope
         base = 126
@@ -312,8 +316,8 @@ class Patch:
             data[base + 4 + i] = max(0, min(99, self.pitch_envelope.levels[i]))
 
         # Global parameters
-        data[134] = self.algorithm & 0x1F
-        data[135] = self.feedback & 0x07
+        data[134] = max(0, min(31, self.algorithm))
+        data[135] = max(0, min(7, self.feedback))
         data[136] = 1 if self.osc_key_sync else 0
 
         # LFO
@@ -322,8 +326,8 @@ class Patch:
         data[139] = max(0, min(99, self.lfo.pitch_mod_depth))
         data[140] = max(0, min(99, self.lfo.amp_mod_depth))
         data[141] = 1 if self.lfo.sync else 0
-        data[142] = self.lfo._wave & 0x07
-        data[143] = self.pitch_mod_sensitivity & 0x07
+        data[142] = max(0, min(5, self.lfo._wave))
+        data[143] = max(0, min(7, self.pitch_mod_sensitivity))
 
         # Transpose
         data[144] = max(0, min(48, self.transpose))

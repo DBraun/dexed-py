@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   into one loop, and the operators inside it were left at zero while the chain's
   output was attributed to the wrong channel, so `x[get_carriers(alg)].sum(0)`
   did not equal the mix channel. The mixed output is unchanged.
+- `Patch.to_sysex()` now clamps out-of-range parameters instead of bit-masking
+  them, so a value past the top of its DX7 range saturates rather than wrapping
+  to a small one. `algorithm = 32` used to render as algorithm 1 and
+  `feedback = 8` as no feedback at all. `Preset.to_patch()` clamps its integer
+  fields the same way, matching its documented behaviour.
 
 ## [0.2.1] - 2026-08-26
 

@@ -195,6 +195,41 @@ class TestOperator:
 class TestSysexConversion:
     """Tests for sysex format conversion."""
 
+    @pytest.mark.parametrize(
+        "field,value,index,expected",
+        [("algorithm", 32, 134, 31), ("algorithm", -1, 134, 0),
+         ("feedback", 8, 135, 7), ("pitch_mod_sensitivity", 9, 143, 7),
+         ("transpose", 60, 144, 48)],
+    )
+    def test_out_of_range_globals_saturate(self, field, value, index, expected):
+        """An out-of-range value must saturate, not wrap around to zero.
+
+        These fields used to be written with a bit mask, so algorithm 32 came
+        out as algorithm 0 and maximum feedback came out as none at all.
+        """
+        patch = Patch()
+        setattr(patch, field, value)
+        assert patch.to_sysex()[index] == expected
+
+    @pytest.mark.parametrize(
+        "field,value,offset,expected",
+        [("rate_scaling", 8, 13, 7), ("amp_mod_sensitivity", 4, 14, 3),
+         ("velocity_sensitivity", 8, 15, 7), ("frequency_coarse", 32, 18, 31),
+         ("detune", 15, 20, 14)],
+    )
+    def test_out_of_range_operator_fields_saturate(self, field, value, offset, expected):
+        patch = Patch()
+        setattr(patch.op[0], field, value)
+        # op 0 is DX7 OP1, which sysex stores last
+        assert patch.to_sysex()[5 * 21 + offset] == expected
+
+    def test_out_of_range_algorithm_reaches_the_synth_as_31(self):
+        patch = Patch()
+        patch.algorithm = 32
+        synth = DexedSynth()
+        synth.load_patch(patch)
+        assert synth.algorithm == 31
+
     def test_to_sysex_length(self):
         """Test that to_sysex returns 156 bytes."""
         patch = Patch()

@@ -442,8 +442,12 @@ class Preset:
         def _denorm(val, max_val):
             return max(0, min(max_val, int(round(float(val) * max_val))))
 
+        def _clamp(val, max_val):
+            """Integer fields are already in DX7 units; only bound them."""
+            return max(0, min(max_val, int(val)))
+
         patch = Patch(name=name)
-        patch.algorithm = int(self.algorithm)
+        patch.algorithm = _clamp(self.algorithm, 31)
         patch.feedback = _denorm(self.feedback, 7)
         patch.osc_key_sync = bool(self.osc_key_sync)
         patch.transpose = _denorm(self.transpose, 48)
@@ -453,7 +457,7 @@ class Preset:
         patch.lfo.pitch_mod_depth = _denorm(self.lfo_pitch_mod_depth, 99)
         patch.lfo.amp_mod_depth = _denorm(self.lfo_amp_mod_depth, 99)
         patch.lfo.sync = bool(self.lfo_sync)
-        patch.lfo._wave = int(self.lfo_wave)
+        patch.lfo._wave = _clamp(self.lfo_wave, 5)
         patch.pitch_mod_sensitivity = _denorm(self.pitch_mod_sensitivity, 7)
 
         per = np.asarray(self.pitch_env_rates)
@@ -482,9 +486,9 @@ class Preset:
             op.breakpoint = _denorm(float(np.asarray(self.op_breakpoint)[i]), 99)
             op.left_depth = _denorm(float(np.asarray(self.op_left_depth)[i]), 99)
             op.right_depth = _denorm(float(np.asarray(self.op_right_depth)[i]), 99)
-            op.frequency_mode = int(ofm[i])
-            op._left_curve = int(olc[i])
-            op._right_curve = int(orc[i])
+            op.frequency_mode = _clamp(ofm[i], 1)
+            op._left_curve = _clamp(olc[i], 3)
+            op._right_curve = _clamp(orc[i], 3)
 
         return patch
 
