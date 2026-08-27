@@ -96,7 +96,8 @@ public:
     int32_t op_outputs[6][N];
 
     // When true, use consistent feedback scaling across all algorithms
-    // When false (default), use Dexed-authentic behavior where algorithms 4, 6, 32 have reduced feedback
+    // When false (default), use Dexed-authentic behavior where DX7 algorithms 4, 6, 32
+    // -- indices 3, 5, 31 -- have reduced feedback
     bool normalize_feedback = false;
     
     // Override the virtual render method to capture individual operator outputs
@@ -152,7 +153,8 @@ public:
                     if ((flags & 0xc0) == 0xc0 && fb_on) {
                         // Compute effective feedback shift
                         // When normalize_feedback is true, use feedback_shift directly for all algorithms
-                        // When false (Dexed-authentic), algorithms 4, 6, 32 get reduced feedback (+2)
+                        // When false (Dexed-authentic), DX7 algorithms 4, 6, 32 (indices 3, 5, 31)
+                        // get reduced feedback (+2)
                         int32_t fb_shift_3op = normalize_feedback ? feedback_shift : min((feedback_shift+2), 16);
                         int32_t fb_shift_2op = normalize_feedback ? feedback_shift : min((feedback_shift+2), 16);
                         int32_t fb_shift_1op_special = normalize_feedback ? feedback_shift : min((feedback_shift+2), 16);
@@ -810,7 +812,8 @@ NB_MODULE(_dexed, m) {
                      &DexedSynth::get_normalize_feedback,
                      &DexedSynth::set_normalize_feedback,
                      "When True, use consistent feedback scaling across all algorithms.\n"
-                     "When False (default), use Dexed-authentic behavior where algorithms 4, 6, 32\n"
+                     "When False (default), use Dexed-authentic behavior where DX7 algorithms\n"
+                     "4, 6 and 32 -- indices 3, 5 and 31, since this API is 0-based --\n"
                      "have reduced feedback strength compared to other algorithms.")
         .def("__getstate__", &DexedSynth::__getstate__,
              "Get state for pickle serialization")
