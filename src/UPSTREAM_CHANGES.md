@@ -2,6 +2,17 @@
 
 This documents modifications to files originally from [asb2m10/dexed](https://github.com/asb2m10/dexed). Last synced with upstream commit `4e21494` (October 15, 2025).
 
+## `EngineMkI.cpp` / `EngineMkI.h`
+
+### Added: optional per-stage capture in `compute_fb2()` / `compute_fb3()`
+
+Both functions collapse a two- or three-operator feedback chain into a single
+sample loop and only ever write out its last stage, so the operators inside the
+chain came back as digital silence from `render_all_ops()`. They now take
+optional `stage0`/`stage1` pointers that receive each intermediate operator's
+output. The pointers default to `nullptr`, so upstream's own call sites are
+unchanged and the mixed output is bit-identical.
+
 ## `msfa/dx7note.cc`
 
 ### Removed: Portamento

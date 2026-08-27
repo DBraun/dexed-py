@@ -158,36 +158,45 @@ public:
                         int32_t fb_shift_1op_special = normalize_feedback ? feedback_shift : min((feedback_shift+2), 16);
 
                         switch (algorithm) {
-                            case 3:  // Algorithm 4 - special 3-op feedback
-                                compute_fb3(capture_ptr, params, gain1, gain2, fb_buf, fb_shift_3op);
+                            case 3: {  // Algorithm 4 - special 3-op feedback
+                                // The chain collapses ops 0..2 into one loop, so
+                                // capture each stage separately: the last one is
+                                // what reaches the mix.
+                                int32_t *chain = op_outputs[2];
+                                compute_fb3(chain, params, gain1, gain2, fb_buf, fb_shift_3op,
+                                            op_outputs[0], op_outputs[1]);
                                 // Copy to output buffer
                                 if (add) {
                                     for (int i = 0; i < N; ++i) {
-                                        outptr[i] += capture_ptr[i];
+                                        outptr[i] += chain[i];
                                     }
                                 } else {
-                                    std::memcpy(outptr, capture_ptr, N * sizeof(int32_t));
+                                    std::memcpy(outptr, chain, N * sizeof(int32_t));
                                 }
                                 // Skip next two operators as they were processed
                                 params[1].phase += params[1].freq << LG_N;
                                 params[2].phase += params[2].freq << LG_N;
                                 op += 2;
                                 break;
+                            }
 
-                            case 5:  // Algorithm 6 - special 2-op feedback
-                                compute_fb2(capture_ptr, params, gain1, gain2, fb_buf, fb_shift_2op);
+                            case 5: {  // Algorithm 6 - special 2-op feedback
+                                int32_t *chain = op_outputs[1];
+                                compute_fb2(chain, params, gain1, gain2, fb_buf, fb_shift_2op,
+                                            op_outputs[0]);
                                 // Copy to output buffer
                                 if (add) {
                                     for (int i = 0; i < N; ++i) {
-                                        outptr[i] += capture_ptr[i];
+                                        outptr[i] += chain[i];
                                     }
                                 } else {
-                                    std::memcpy(outptr, capture_ptr, N * sizeof(int32_t));
+                                    std::memcpy(outptr, chain, N * sizeof(int32_t));
                                 }
                                 // Skip next operator as it was processed
                                 params[1].phase += params[1].freq << LG_N;
                                 op++;
                                 break;
+                            }
 
                             case 31:  // Algorithm 32 - single op feedback (Dexed uses reduced feedback here too)
                                 compute_fb(capture_ptr, param.phase, param.freq, gain1, gain2,

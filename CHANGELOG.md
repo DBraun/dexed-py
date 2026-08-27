@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   formula that disagreed with the engine for every setting except
   `coarse=0, fine=0`, by as much as 250x. Rendering was always correct; only the
   reported value was wrong.
+- `render_all_ops()` no longer returns silent channels for DX7 algorithms 4 and
+  6 when feedback is non-zero. Those algorithms collapse their feedback chain
+  into one loop, and the operators inside it were left at zero while the chain's
+  output was attributed to the wrong channel, so `x[get_carriers(alg)].sum(0)`
+  did not equal the mix channel. The mixed output is unchanged.
 
 ## [0.2.1] - 2026-08-26
 

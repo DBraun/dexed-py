@@ -40,9 +40,14 @@ public:
     void compute_fb(int32_t *output, int32_t phase0, int32_t freq, int32_t gain1, int32_t gain2,
                        int32_t *fb_buf, int fb_gain, bool add);
     
-    void compute_fb2(int32_t *output, FmOpParams *params, int32_t gain01, int32_t gain02, int32_t *fb_buf, int fb_shift);
+    // stage0/stage1 optionally receive the output of each operator inside the
+    // collapsed feedback chain; `output` always receives the last one. Dexed
+    // itself never needs them, but capturing per-operator audio does.
+    void compute_fb2(int32_t *output, FmOpParams *params, int32_t gain01, int32_t gain02, int32_t *fb_buf, int fb_shift,
+                     int32_t *stage0 = nullptr);
     
-    void compute_fb3(int32_t *output, FmOpParams *params, int32_t gain01, int32_t gain02, int32_t *fb_buf, int fb_shift);
+    void compute_fb3(int32_t *output, FmOpParams *params, int32_t gain01, int32_t gain02, int32_t *fb_buf, int fb_shift,
+                     int32_t *stage0 = nullptr, int32_t *stage1 = nullptr);
 };
 
 
