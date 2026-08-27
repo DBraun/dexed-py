@@ -293,7 +293,7 @@ private:
 
     // Serializes every method that touches the state above, so that sharing one
     // synth between Python threads is safe rather than a use-after-free.
-    std::mutex state_mutex;
+    mutable std::mutex state_mutex;
     static constexpr float INT32_TO_FLOAT_SCALE = 1.0f / (1L << 25);
     
     // Convert normalized [0,1] to DX7 parameter range
@@ -708,9 +708,24 @@ public:
         engine.normalize_feedback = normalize;
     }
 
-    // Pickle support using getstate/setstate to avoid reference leaks
+    // Restore the voice data captured by __getstate__.
+    void restore_params(nb::bytes data, bool loaded) {
+        auto lock = lock_without_gil(state_mutex);
+        if (data.size() != 156) {
+            throw std::runtime_error("Pickled voice data must be 156 bytes");
+        }
+        std::memcpy(dx7_params, data.c_str(), 156);
+        params_loaded = loaded;
+    }
+
+    // Pickle support using getstate/setstate to avoid reference leaks.
+    // The voice data is part of the state: without it an unpickled synth
+    // reports the right algorithm but raises as soon as you render.
     nb::tuple __getstate__() const {
-        return nb::make_tuple(sample_rate, algorithm, engine.normalize_feedback);
+        auto lock = lock_without_gil(state_mutex);
+        return nb::make_tuple(sample_rate, algorithm, engine.normalize_feedback,
+                              params_loaded,
+                              nb::bytes(reinterpret_cast<const char *>(dx7_params), 156));
     }
 };
 
@@ -791,7 +806,7 @@ NB_MODULE(_dexed, m) {
         .def("__getstate__", &DexedSynth::__getstate__,
              "Get state for pickle serialization")
         .def("__setstate__", [](DexedSynth &synth, nb::tuple state) {
-            if (state.size() < 2 || state.size() > 3) {
+            if (state.size() < 2 || state.size() == 4 || state.size() > 5) {
                 throw std::runtime_error("Invalid state for unpickling");
             }
 
@@ -800,9 +815,14 @@ NB_MODULE(_dexed, m) {
             int alg = nb::cast<int>(state[1]);
             new (&synth) DexedSynth(sr, alg);
 
-            // Handle normalize_feedback if present (backward compatibility)
-            if (state.size() == 3) {
+            // normalize_feedback and the voice data were both added later;
+            // older pickles carry 2- or 3-element states.
+            if (state.size() >= 3) {
                 synth.set_normalize_feedback(nb::cast<bool>(state[2]));
+            }
+            if (state.size() == 5) {
+                synth.restore_params(nb::cast<nb::bytes>(state[4]),
+                                     nb::cast<bool>(state[3]));
             }
         }, "Set state for pickle deserialization");
 }

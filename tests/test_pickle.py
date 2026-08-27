@@ -77,5 +77,52 @@ def test_pickle_file_io():
         os.unlink(temp_path)
 
 
+def test_unpickled_synth_renders_without_reloading():
+    """The loaded voice is part of the state.
+
+    __getstate__ used to keep only the sample rate, algorithm and
+    normalize_feedback, so an unpickled synth reported the right algorithm --
+    which is derived from the voice data it had just dropped -- and then raised
+    "Parameters must be loaded before rendering" on the first render.
+    """
+    patch = dexed.Patch(name="PICKLED")
+    patch.algorithm = 7
+    patch.feedback = 4
+    for i in range(6):
+        patch.op[i].output_level = 90
+
+    synth = dexed.DexedSynth(44100.0)
+    synth.load_patch(patch)
+    expected = synth.render(
+        midi_note=60, velocity=100, note_duration=0.1, render_duration=0.15
+    )
+
+    restored = pickle.loads(pickle.dumps(synth))
+    assert restored.algorithm == 7
+    audio = restored.render(
+        midi_note=60, velocity=100, note_duration=0.1, render_duration=0.15
+    )
+    assert np.array_equal(audio, expected)
+
+
+def test_unpickled_synth_without_a_patch_still_reports_the_error():
+    synth = dexed.DexedSynth(44100.0)
+    restored = pickle.loads(pickle.dumps(synth))
+    with pytest.raises(RuntimeError, match="must be loaded"):
+        restored.render(render_duration=0.05)
+
+
+def test_older_pickle_states_are_still_accepted():
+    """States from 0.2.0 and earlier carried 2 or 3 elements."""
+    from dexed._dexed import DexedSynth as RawSynth
+
+    for state in [(48000.0, 5), (48000.0, 5, True)]:
+        # __setstate__ is what pickle calls; drive it directly.
+        synth = RawSynth.__new__(RawSynth)
+        synth.__setstate__(state)
+        assert synth.sample_rate == 48000.0
+        assert synth.algorithm == 5
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

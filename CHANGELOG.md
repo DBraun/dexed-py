@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Pickling a `DexedSynth` keeps the loaded voice. `__getstate__` saved only the
+  sample rate, algorithm and `normalize_feedback`, so an unpickled synth
+  reported the right algorithm -- itself derived from the voice data it had just
+  dropped -- and then raised on the first `render()`. Pickles written by 0.2.0
+  and earlier still load.
 - Sharing a `DexedSynth` between threads no longer crashes the interpreter.
   Loading and rendering are now serialized per instance.
 - Creating a second `DexedSynth` at a different sample rate no longer retunes
