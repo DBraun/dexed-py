@@ -145,7 +145,9 @@ def render_from_flat(flat_params):   # (145,) float32
 The 32 standard DX7 algorithms define which operators are carriers (output to audio) and which are modulators (modulate other operators). All indices are 0-based.
 
 ```python
-from dexed import algorithms, get_carriers, get_modulators, get_mod_matrix
+from dexed import (
+    algorithms, get_carriers, get_modulators, get_mod_matrix, get_feedback_edge,
+)
 
 alg = algorithms[15]
 print(f"Algorithm 15 carriers: {alg.carriers}")
@@ -154,6 +156,16 @@ print(f"Feedback edge: {alg.feedback_edge}")  # (source, target) — same op for
 print(f"Modulation matrix:\n{alg.mod_matrix}")   # 6x6 int8
 
 carriers = get_carriers(31)   # [0, 1, 2, 3, 4, 5] — all parallel
+```
+
+Most algorithms feed an operator back into itself, so `source == target`. Two do
+not: their feedback wraps a whole chain.
+
+```python
+get_feedback_edge(0)    # (5, 5) — DX7 algorithm 1, op 6 into itself
+get_feedback_edge(17)   # (2, 2) — DX7 algorithm 18, op 3 into itself
+get_feedback_edge(3)    # (3, 5) — DX7 algorithm 4, op 4 back into op 6
+get_feedback_edge(5)    # (4, 5) — DX7 algorithm 6, op 5 back into op 6
 ```
 
 ## Individual Operator Outputs

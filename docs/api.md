@@ -65,5 +65,14 @@
 ```
 
 ```{eval-rst}
+.. autofunction:: dexed.get_feedback_edge
+```
+
+```{eval-rst}
+.. autoclass:: dexed.algorithms.Algorithm
+   :members:
+```
+
+```{eval-rst}
 .. autodata:: dexed.algorithms
 ```

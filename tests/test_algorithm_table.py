@@ -129,6 +129,26 @@ def test_known_feedback_edges(alg, expected):
     assert algorithms[alg].feedback_edge == expected
 
 
+def test_get_feedback_edge_is_exported_and_agrees_with_the_table():
+    """The 0.2.1 changelog advertises this export; nothing used it."""
+    import dexed
+
+    assert "get_feedback_edge" in dexed.__all__
+    for alg in range(32):
+        assert dexed.get_feedback_edge(alg) == algorithms[alg].feedback_edge
+
+
+@pytest.mark.parametrize(
+    "alg, expected",
+    [(0, (5, 5)), (17, (2, 2)), (3, (3, 5)), (5, (4, 5))],
+)
+def test_documented_feedback_edge_examples(alg, expected):
+    """The exact values README.md and docs/quickstart.md print."""
+    import dexed
+
+    assert dexed.get_feedback_edge(alg) == expected
+
+
 @pytest.mark.parametrize("alg", range(32))
 def test_carriers_and_modulators_partition_operators(alg):
     """Every operator is either a carrier or a modulator, never both or neither."""
