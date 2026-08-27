@@ -12,6 +12,17 @@ import warnings
 
 import numpy as np
 
+def _normparm(value: int, max_val: int) -> int:
+    """Bring a corrupt sysex byte into range, as Dexed's `normparm` does.
+
+    A value inside the range is kept; anything above it is treated as 0-255
+    noise and rescaled, rather than being handed to the engine as-is.
+    """
+    if value <= max_val:
+        return value
+    return int(value / 255 * max_val)
+
+
 # 32-voice bulk dump: F0 43 00 09 20 00, 4096 payload bytes, checksum, F7
 BANK_SYSEX_HEADER = bytes([0xF0, 0x43, 0x00, 0x09, 0x20, 0x00])
 BANK_SYSEX_SIZE = 4104
@@ -371,49 +382,63 @@ class Patch:
 
     @staticmethod
     def _unpack_voice(packed: bytes) -> bytearray:
-        """Unpack 128-byte voice to 156-byte format."""
+        """Unpack 128-byte voice to 156-byte format.
+
+        Mirrors Dexed's ``Cartridge::unpackProgram``: bit 7 of every packed byte
+        is "don't care" per the sysex spec and is masked off, and the fields
+        with a range narrower than the bits they occupy are normalized rather
+        than passed through. Without that, a corrupt byte reached the engine as
+        a wildly out-of-range parameter.
+        """
         unpacked = bytearray(156)
 
         for op in range(6):
-            # Copy first 11 bytes directly
+            # Envelope, breakpoint, depths and scaling. Dexed normalizes these
+            # and then overwrites the result with a raw copy; match the copy.
             unpacked[op * 21:op * 21 + 11] = packed[op * 17:op * 17 + 11]
 
             # Unpack combined bytes
-            left_right_curves = packed[op * 17 + 11]
+            left_right_curves = packed[op * 17 + 11] & 0x0F
             unpacked[op * 21 + 11] = left_right_curves & 0x03
             unpacked[op * 21 + 12] = (left_right_curves >> 2) & 0x03
 
-            detune_rs = packed[op * 17 + 12]
+            detune_rs = packed[op * 17 + 12] & 0x7F
             unpacked[op * 21 + 13] = detune_rs & 0x07
             unpacked[op * 21 + 20] = detune_rs >> 3
 
-            kvs_ams = packed[op * 17 + 13]
+            kvs_ams = packed[op * 17 + 13] & 0x1F
             unpacked[op * 21 + 14] = kvs_ams & 0x03
             unpacked[op * 21 + 15] = kvs_ams >> 2
 
-            unpacked[op * 21 + 16] = packed[op * 17 + 14]
+            unpacked[op * 21 + 16] = packed[op * 17 + 14] & 0x7F
 
-            fcoarse_mode = packed[op * 17 + 15]
+            fcoarse_mode = packed[op * 17 + 15] & 0x3F
             unpacked[op * 21 + 17] = fcoarse_mode & 0x01
             unpacked[op * 21 + 18] = fcoarse_mode >> 1
 
-            unpacked[op * 21 + 19] = packed[op * 17 + 16]
+            unpacked[op * 21 + 19] = packed[op * 17 + 16] & 0x7F
 
-        # Pitch EG and other globals
-        unpacked[126:135] = packed[102:111]
+        # Pitch EG
+        for i in range(8):
+            unpacked[126 + i] = _normparm(packed[102 + i] & 0x7F, 99)
 
-        oks_fb = packed[111]
+        unpacked[134] = packed[110] & 0x1F
+
+        oks_fb = packed[111] & 0x0F
         unpacked[135] = oks_fb & 0x07
         unpacked[136] = oks_fb >> 3
 
-        unpacked[137:141] = packed[112:116]
+        for i in range(4):
+            unpacked[137 + i] = packed[112 + i] & 0x7F
 
-        lpms_lfw_lks = packed[116]
+        lpms_lfw_lks = packed[116] & 0x7F
         unpacked[141] = lpms_lfw_lks & 0x01
         unpacked[142] = (lpms_lfw_lks >> 1) & 0x07
         unpacked[143] = lpms_lfw_lks >> 4
 
-        unpacked[144:155] = packed[117:128]
+        unpacked[144] = packed[117] & 0x7F
+        for i in range(10):
+            unpacked[145 + i] = packed[118 + i] & 0x7F
         unpacked[155] = 0x3F
 
         return unpacked

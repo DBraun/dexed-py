@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   reported the right algorithm -- itself derived from the voice data it had just
   dropped -- and then raised on the first `render()`. Pickles written by 0.2.0
   and earlier still load.
+- Unpacking a packed voice now masks the "don't care" bits and normalizes
+  out-of-range bytes, matching Dexed's `Cartridge::unpackProgram`. A corrupt or
+  out-of-spec byte used to be handed through verbatim: packed byte 102 = 200
+  gave `pitch_envelope.rates[0] = 200` and a `to_preset()` value of 2.02 in a
+  field documented as `[0, 1]`, where Dexed yields 72.
 - Sharing a `DexedSynth` between threads no longer crashes the interpreter.
   Loading and rendering are now serialized per instance.
 - Creating a second `DexedSynth` at a different sample rate no longer retunes

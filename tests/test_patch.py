@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """Tests for the Patch class and related functionality."""
 
+import os
+
 import numpy as np
 import pytest
 from dexed import (
@@ -304,6 +306,71 @@ class TestBankIO:
         path.write_bytes(bytes([0xF0]) + bytes(5000))
         with pytest.raises(ValueError, match="No 32-voice DX7 bulk dump"):
             Patch.load_bank(str(path))
+
+
+class TestPackedVoiceUnpacking:
+    """_unpack_voice must match Dexed's Cartridge::unpackProgram."""
+
+    @staticmethod
+    def _packed(**overrides):
+        packed = bytearray(Patch(name="INIT VOICE").to_packed())
+        for index, value in overrides.items():
+            packed[int(index[1:])] = value
+        return bytes(packed)
+
+    def test_pitch_eg_bytes_are_normalized(self):
+        """Dexed rescales an out-of-range byte; we passed it straight through.
+
+        Byte 102 = 200 used to give pitch_envelope.rates[0] = 200, and a
+        to_preset() value of 2.02 in a field documented as [0, 1]. Dexed masks
+        bit 7 first, so 200 becomes 72, and only what is still out of range
+        after that is rescaled.
+        """
+        assert Patch.from_packed(self._packed(b102=200)).pitch_envelope.rates[0] == 72
+        # 127 survives the mask and is still out of range, so it is rescaled
+        assert Patch.from_packed(self._packed(b102=127)).pitch_envelope.rates[0] == 49
+
+    def test_in_range_pitch_eg_bytes_are_untouched(self):
+        patch = Patch.from_packed(self._packed(b102=64))
+        assert patch.pitch_envelope.rates[0] == 64
+
+    def test_transpose_is_masked_to_seven_bits(self):
+        patch = Patch.from_packed(self._packed(b117=184))
+        assert patch.transpose == 184 & 0x7F
+
+    def test_dont_care_bits_are_dropped(self):
+        """Bits the sysex spec marks "don't care" must not leak into fields."""
+        # op 0 is DX7 OP1, stored last: packed offset 5 * 17
+        base = 5 * 17
+        packed = bytearray(Patch().to_packed())
+        packed[base + 13] = 0x7F          # kvs/ams: only the low 5 bits count
+        packed[base + 15] = 0xFF          # coarse/mode: only the low 6 bits
+        packed[base + 12] = 0xFF          # detune/rate scaling: low 7 bits
+        patch = Patch.from_packed(bytes(packed))
+
+        assert patch.op[0].amp_mod_sensitivity == 0x1F & 0x03
+        assert patch.op[0].velocity_sensitivity == (0x1F >> 2) & 0x07
+        assert patch.op[0].frequency_coarse == (0x3F >> 1)
+        assert patch.op[0].detune == (0x7F >> 3) & 0x0F
+
+    def test_factory_banks_round_trip(self, tmp_path):
+        """Every voice in Dexed's own banks must survive load -> save."""
+        import zipfile
+
+        archive = "/Users/braun/GitHub/dexed/assets/builtin_pgm.zip"
+        if not os.path.exists(archive):
+            pytest.skip("Dexed factory banks not available")
+
+        checked = 0
+        with zipfile.ZipFile(archive) as bundle:
+            for name in [n for n in bundle.namelist() if n.lower().endswith(".syx")][:8]:
+                path = tmp_path / "bank.syx"
+                path.write_bytes(bundle.read(name))
+                for patch in Patch.load_bank(str(path)):
+                    assert len(patch.to_packed()) == 128
+                    assert len(patch.name) == 10
+                    checked += 1
+        assert checked > 0
 
 
 class TestSysexConversion:
