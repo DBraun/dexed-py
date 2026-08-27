@@ -154,14 +154,14 @@ class Operator:
             self.frequency_fine = int((remainder / int(value)) * 100) if int(value) > 0 else 0
 
     def _compute_fixed_freq(self) -> float:
-        """Compute fixed frequency in Hz from coarse/fine."""
-        # DX7 fixed frequency formula
-        base_freqs = [1, 10, 100, 1000]
-        coarse_idx = min(3, self.frequency_coarse // 4)
-        base = base_freqs[coarse_idx]
-        mult = (self.frequency_coarse % 4) + 1
-        fine_mult = 1.0 + (self.frequency_fine / 100.0)
-        return base * mult * fine_mult
+        """Compute fixed frequency in Hz from coarse/fine.
+
+        The engine computes ``logfreq = (4458616 * ((coarse & 3) * 100 + fine)) >> 3``
+        (``msfa/dx7note.cc``), i.e. a decade per unit of the low two coarse bits
+        and a hundredth of a decade per unit of fine. Detune is excluded, as it
+        is in ratio mode.
+        """
+        return 10.0 ** ((self.frequency_coarse & 3) + self.frequency_fine / 100.0)
 
 
 class Patch:

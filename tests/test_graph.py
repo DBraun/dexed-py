@@ -348,6 +348,18 @@ class TestGraphOperator:
         op.frequency_fine = 50
         assert op.frequency_ratio == 3.0  # 2 * 1.5
 
+    def test_fixed_frequency(self):
+        """Fixed mode reports Hz, using only the low two bits of coarse."""
+        op = GraphOperator()
+        op.frequency_mode = 1
+        for coarse, fine, expected in [
+            (0, 0, 1.0), (1, 0, 10.0), (2, 0, 100.0), (3, 0, 1000.0),
+            (5, 0, 10.0), (2, 30, 199.526231),
+        ]:
+            op.frequency_coarse = coarse
+            op.frequency_fine = fine
+            assert op.frequency_ratio == pytest.approx(expected)
+
 
 class TestGraphEnvelope:
     """Tests for GraphEnvelope class."""

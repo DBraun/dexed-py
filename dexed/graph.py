@@ -405,14 +405,13 @@ class GraphOperator:
         return coarse * fine
 
     def _fixed_frequency(self) -> float:
-        """Compute fixed frequency in Hz."""
-        base_freqs = [1, 10, 100, 1000]
-        coarse = self.frequency_coarse
-        power = coarse // 4
-        mult = (coarse % 4) + 1
-        base = base_freqs[min(power, 3)]
-        fine = 1.0 + self.frequency_fine / 100.0
-        return base * mult * fine
+        """Compute fixed frequency in Hz.
+
+        Matches ``_compute_osc_freq``'s fixed-mode branch: a decade per unit of
+        the low two coarse bits, a hundredth of a decade per unit of fine.
+        Detune is excluded, as it is in ratio mode.
+        """
+        return 10.0 ** ((self.frequency_coarse & 3) + self.frequency_fine / 100.0)
 
 
 # =============================================================================

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   are re-pointed at the rendering synth's own sample rate; rendering two
   different sample rates concurrently now raises instead of returning
   quietly detuned audio.
+- `Operator.frequency_ratio` and `GraphOperator.frequency_ratio` now report the
+  correct frequency in fixed-frequency mode. Both used a decade-times-multiplier
+  formula that disagreed with the engine for every setting except
+  `coarse=0, fine=0`, by as much as 250x. Rendering was always correct; only the
+  reported value was wrong.
 
 ## [0.2.1] - 2026-08-26
 

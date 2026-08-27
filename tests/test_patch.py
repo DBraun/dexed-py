@@ -147,6 +147,50 @@ class TestOperator:
         op.frequency_mode = 0  # Ratio mode
         assert op.frequency_ratio == 2.0
 
+    @pytest.mark.parametrize(
+        "coarse,fine,expected_hz",
+        [(0, 0, 1.0), (1, 0, 10.0), (2, 0, 100.0), (3, 0, 1000.0),
+         (4, 0, 1.0), (5, 0, 10.0), (2, 30, 199.526231), (1, 50, 31.622777)],
+    )
+    def test_fixed_frequency_matches_engine_formula(self, coarse, fine, expected_hz):
+        """Fixed mode is a decade per coarse unit, a centidecade per fine unit.
+
+        The engine computes 10 ** ((coarse & 3) + fine / 100); only the low two
+        bits of coarse are used, so coarse 4 wraps back to 1 Hz.
+        """
+        op = Operator()
+        op.frequency_mode = 1
+        op.frequency_coarse = coarse
+        op.frequency_fine = fine
+        assert op.frequency_ratio == pytest.approx(expected_hz)
+
+    @pytest.mark.parametrize("coarse,fine", [(2, 0), (3, 0), (2, 30)])
+    def test_fixed_frequency_matches_rendered_audio(self, coarse, fine):
+        """The reported frequency must be the one the synth actually renders."""
+        sample_rate = 44100.0
+        patch = Patch()
+        patch.algorithm = 31  # all six operators are carriers
+        for i in range(6):
+            patch.op[i].output_level = 99 if i == 0 else 0
+            patch.op[i].envelope.rates = [99, 99, 99, 99]
+            patch.op[i].envelope.levels = [99, 99, 99, 0]
+        patch.op[0].frequency_mode = 1
+        patch.op[0].frequency_coarse = coarse
+        patch.op[0].frequency_fine = fine
+
+        synth = DexedSynth(sample_rate=sample_rate)
+        synth.load_patch(patch)
+        audio = synth.render(
+            midi_note=60, velocity=99, note_duration=0.5, render_duration=0.5
+        )
+
+        window = audio[2000:2000 + 16384]
+        spectrum = np.abs(np.fft.rfft(window * np.hanning(len(window))))
+        peak_hz = np.fft.rfftfreq(len(window), 1.0 / sample_rate)[np.argmax(spectrum)]
+
+        bin_width = sample_rate / len(window)
+        assert peak_hz == pytest.approx(patch.op[0].frequency_ratio, abs=2 * bin_width)
+
 
 class TestSysexConversion:
     """Tests for sysex format conversion."""
