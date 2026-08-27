@@ -27,7 +27,7 @@ audio3 = synth.render(midi_note=67, velocity=120)
 
 ## Loading and Saving DX7 Sysex Files
 
-DX7 sysex banks are 4096-byte `.syx` files containing 32 patches. Individual voice dumps are 163 bytes (with a 6-byte sysex header + 155 data bytes + 2 trailing bytes).
+DX7 sysex banks are 4104-byte `.syx` bulk dumps containing 32 patches: a 6-byte header, a 4096-byte payload, a checksum and an end-of-exclusive byte. A raw 4096-byte payload with no framing loads too. Individual voice dumps are 163 bytes (a 6-byte sysex header + 155 data bytes + 2 trailing bytes).
 
 ```python
 from dexed import Patch
@@ -205,7 +205,7 @@ for i in range(6, 0, -1):
     graph.connect(i, i - 1)
 
 graph.set_carriers([0])
-graph.set_feedback(6, 6, level=7)
+graph.set_feedback(6, 6, level=7)   # source, target, level (0-7)
 
 audio = graph.render(sample_rate=44100, midi_note=60, velocity=100,
                      note_duration=1.0, render_duration=1.5)
@@ -223,7 +223,7 @@ from dexed import OperatorGraph
 mod_matrix = np.zeros((4, 4), dtype=np.float32)
 mod_matrix[0, 1] = 1.0  # Op 1 modulates Op 0
 mod_matrix[1, 2] = 1.0  # Op 2 modulates Op 1
-graph = OperatorGraph.from_matrix(mod_matrix, carriers=[0], feedback={3: 0.5})
+graph = OperatorGraph.from_matrix(mod_matrix, carriers=[0], feedback={(3, 3): 5})
 ```
 
 ### From a Standard DX7 Algorithm

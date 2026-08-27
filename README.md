@@ -44,7 +44,7 @@ audio = synth.render(midi_note=60, velocity=100, note_duration=1.0, render_durat
 ```python
 from dexed import Patch
 
-# Load a 32-voice bank (4096-byte .syx file)
+# Load a 32-voice bank (a 4104-byte .syx bulk dump, or a raw 4096-byte payload)
 patches = Patch.load_bank("rom1a.syx")
 for i, p in enumerate(patches[:5]):
     print(f"  {i}: {p.name.strip()} (algorithm {p.algorithm})")
@@ -346,7 +346,7 @@ graph.to_mermaid()     # Mermaid diagram syntax
 
 # Factory methods
 OperatorGraph.from_algorithm(15)
-OperatorGraph.from_matrix(mod_matrix, carriers=[0], feedback={5: 7})
+OperatorGraph.from_matrix(mod_matrix, carriers=[0], feedback={(5, 5): 7})
 
 # Rendering
 audio = graph.render(sample_rate=44100, midi_note=60, velocity=100,
