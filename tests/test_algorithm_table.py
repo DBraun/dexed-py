@@ -130,7 +130,7 @@ def test_known_feedback_edges(alg, expected):
 
 
 def test_get_feedback_edge_is_exported_and_agrees_with_the_table():
-    """The 0.2.1 changelog advertises this export; nothing used it."""
+    """The changelog advertises this export; nothing used it."""
     import dexed
 
     assert "get_feedback_edge" in dexed.__all__

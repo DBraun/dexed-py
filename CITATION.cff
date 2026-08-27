@@ -7,9 +7,9 @@ authors:
     given-names: David
     email: braun@ccrma.stanford.edu
     orcid: "https://orcid.org/0000-0001-8866-0756"
-version: "0.2.0"
-date-released: "2026-04-10"
-license: GPL-3.0
+version: "0.3.0"
+date-released: "2026-08-26"
+license: GPL-3.0-or-later
 url: "https://github.com/DBraun/dexed-py"
 repository-code: "https://github.com/DBraun/dexed-py"
 keywords:

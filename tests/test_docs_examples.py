@@ -89,3 +89,49 @@ def test_bank_save_and_load_example_runs(tmp_path):
 def test_documented_bank_size_is_the_real_one():
     for name, number, line in _snippets(r"4096-byte `?\.syx"):
         pytest.fail(f"{name}:{number} calls a bank a 4096-byte .syx: {line}")
+
+
+def test_version_metadata_agrees_everywhere():
+    """CITATION.cff is the one version string not derived from version.py.
+
+    It drifted the moment version.py was bumped, and nothing caught it: the
+    "Cite this repository" button would have named the previous release.
+    """
+    import dexed
+
+    root = Path(__file__).resolve().parent.parent
+    citation = (root / "CITATION.cff").read_text()
+    match = re.search(r'^version:\s*"([^"]+)"', citation, re.MULTILINE)
+    assert match, "CITATION.cff has no version field"
+    assert match.group(1) == dexed.__version__
+
+    changelog = (root / "CHANGELOG.md").read_text()
+    assert f"## [{dexed.__version__}]" in changelog, (
+        f"CHANGELOG.md has no section for {dexed.__version__}"
+    )
+
+
+def test_license_metadata_agrees_everywhere():
+    """pyproject.toml shipped Apache-2.0 for GPL-3.0 code from the first commit.
+
+    The README sentence it came from scopes Apache 2.0 to src/msfa alone; the
+    project itself, and both LICENSE files, are GPL. Nothing checked.
+    """
+    root = Path(__file__).resolve().parent.parent
+    expected = "GPL-3.0-or-later"
+
+    pyproject = (root / "pyproject.toml").read_text()
+    match = re.search(r'^license\s*=\s*"([^"]+)"', pyproject, re.MULTILINE)
+    assert match, "pyproject.toml has no license expression"
+    assert match.group(1) == expected
+
+    citation = (root / "CITATION.cff").read_text()
+    match = re.search(r"^license:\s*(\S+)", citation, re.MULTILINE)
+    assert match, "CITATION.cff has no license field"
+    assert match.group(1) == expected
+
+    # The bundled licence text is the GPL, not Apache.
+    assert "GNU GENERAL PUBLIC LICENSE" in (root / "LICENSE").read_text()
+
+    # PEP 639: a license expression and License:: classifiers are exclusive.
+    assert "License :: OSI Approved" not in pyproject

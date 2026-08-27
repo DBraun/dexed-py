@@ -5,10 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-26
+
+### Added
+
+- `get_feedback_edge()` is exported from the top-level `dexed` namespace,
+  alongside `get_carriers()`, `get_modulators()` and `get_mod_matrix()`, and is
+  documented in the API reference.
 
 ### Changed
 
+- The package now declares its licence correctly. `pyproject.toml` said
+  `Apache-2.0`, which applies only to the vendored `src/msfa` component, while
+  the project and both bundled `LICENSE` files are GPL. The metadata is now the
+  PEP 639 expression `GPL-3.0-or-later`, matching `CITATION.cff`.
 - `Patch.save_to_bank()` is a classmethod, matching its sibling
   `Patch.load_bank()` and the form every doc example already used:
   `Patch.save_to_bank("bank.syx", patches)`. It was an instance method, so the
@@ -49,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- DX7 algorithm 18 (index 17) and algorithm 21 (index 20) feedback are correctly
+  reported as a self-loop on op 2 instead of op 5. In both algorithms the
+  feedback bits sit in the slot for DX7 operator 3 in `FmCore::algorithms[32]`
+  (`src/msfa/fm_core.cc`), not operator 6. All 32 entries in `_ALGORITHM_DATA`
+  now agree with that table on carriers, modulators, modulation edges and
+  feedback edges, and the test suite checks them against it.
 - Pickling a `DexedSynth` keeps the loaded voice. `__getstate__` saved only the
   sample rate, algorithm and `normalize_feedback`, so an unpickled synth
   reported the right algorithm -- itself derived from the voice data it had just
@@ -93,22 +109,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   to a small one. `algorithm = 32` used to render as algorithm 1 and
   `feedback = 8` as no feedback at all. `Preset.to_patch()` clamps its integer
   fields the same way, matching its documented behaviour.
-
-## [0.2.1] - 2026-08-26
-
-### Added
-
-- `get_feedback_edge()` is now exported from the top-level `dexed` namespace, alongside `get_carriers()`, `get_modulators()` and `get_mod_matrix()`.
-
-### Fixed
-
-- DX7 algorithm 18 (index 17) feedback is now correctly reported as a self-loop on op 2 instead of op 5.
-- DX7 algorithm 21 (index 20) feedback is now correctly reported as a self-loop on op 2 instead of op 5.
-
-  In both algorithms the feedback bits sit in the slot for DX7 operator 3 in
-  `FmCore::algorithms[32]` (`src/msfa/fm_core.cc`), not operator 6. All 32
-  entries in `_ALGORITHM_DATA` now agree with that table on carriers,
-  modulators, modulation edges, and feedback edges.
 
 ## [0.2.0] - 2026-04-10
 

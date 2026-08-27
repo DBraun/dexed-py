@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-    "scikit-build-core>=0.10",
+    "scikit-build-core>=0.11",  # >=0.11 for PEP 639 license expressions
     "nanobind>=2.0.0"
 ]
 build-backend = "scikit_build_core.build"
@@ -11,7 +11,8 @@ dynamic = ["version"]
 description = "Python bindings for Dexed DX7 synthesizer"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "Apache-2.0"}
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [
     {name = "David Braun", email = "braun@ccrma.stanford.edu"}
 ]
