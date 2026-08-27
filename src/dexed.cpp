@@ -695,7 +695,14 @@ public:
             throw std::runtime_error("Sysex data must be at least 156 bytes");
         }
         std::memcpy(dx7_params, data.data(), 156);
-        algorithm = dx7_params[134] & 0x1F;  // Sync from sysex byte (0-31)
+        // Dx7Note::init reads byte 134 unmasked and indexes the 32-entry
+        // algorithm table with it, and byte 135 >= 10 makes the feedback shift
+        // negative, so both have to be brought into range here -- exactly what
+        // Dexed's unpackProgram does. Patch.to_sysex() already clamps them;
+        // this guards the raw entry point.
+        dx7_params[134] &= 0x1F;
+        dx7_params[135] &= 0x07;
+        algorithm = dx7_params[134];  // Sync from sysex byte (0-31)
         params_loaded = true;
     }
 

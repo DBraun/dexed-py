@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `OperatorGraph.from_matrix()` now raise instead of being stored, reported by
   every query method, and then skipped by both render loops. Self-modulation is
   feedback: use `set_feedback(i, i, level)`.
+- The raw `_dexed.DexedSynth.load_sysex()` bounds the algorithm and feedback
+  bytes, as Dexed's `unpackProgram` does. Byte 134 was copied through unmasked
+  and used to index the 32-entry algorithm table, and byte 135 >= 10 gave the
+  feedback kernels a negative shift count. Not reachable through the public
+  `DexedSynth`, which always passes `Patch.to_sysex()`.
 - Sharing a `DexedSynth` between threads no longer crashes the interpreter.
   Loading and rendering are now serialized per instance.
 - Creating a second `DexedSynth` at a different sample rate no longer retunes
