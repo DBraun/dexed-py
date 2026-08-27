@@ -496,7 +496,8 @@ public:
         lfo->reset(&dx7_params[137]);
         lfo->keydown();
 
-        voice = std::make_unique<Dx7Note>(tuning, &engine);
+        // No MTS-ESP client in the standalone binding; see src/UPSTREAM_CHANGES.md
+        voice = std::make_unique<Dx7Note>(tuning, nullptr);
 
         // Apply transpose: DX7 stores 0-48 with 24 meaning no shift (C3)
         int transposed_note = midi_note + (dx7_params[144] - 24);
@@ -588,7 +589,8 @@ public:
         lfo->reset(&dx7_params[137]);
         lfo->keydown();
 
-        voice = std::make_unique<Dx7Note>(tuning, &engine);
+        // No MTS-ESP client in the standalone binding; see src/UPSTREAM_CHANGES.md
+        voice = std::make_unique<Dx7Note>(tuning, nullptr);
 
         // Apply transpose: DX7 stores 0-48 with 24 meaning no shift (C3)
         int transposed_note = midi_note + (dx7_params[144] - 24);

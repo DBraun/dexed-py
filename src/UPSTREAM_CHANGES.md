@@ -35,6 +35,13 @@ To restore portamento, refer to the upstream `dx7note.cc` and `porta.cpp`/`porta
 
 Upstream checks for MTS-ESP master tuning in `osc_freq()` via `MTS_HasMaster()` / `MTS_NoteToFrequency()`. We simplified `osc_freq()` to always use `tuning_state_->midinote_to_logfreq()`, since no MTS client is connected in the standalone binding. The MTS stub functions in `tuning.h` ensure this compiles but the code paths were dead.
 
+### Note: `Dx7Note` is constructed with a null MTS client
+
+Both call sites in `dexed.cpp` pass `nullptr` for the `MTSClient *` parameter.
+The MTS code paths are dead here (see below), and the local stub declares
+`MTSClient` opaque, as the real `libMTSClient.h` does, so nothing else can be
+passed by accident.
+
 ### Added: Explicit initialization
 
 - `fb_buf_[0] = 0; fb_buf_[1] = 0;` in constructor — zero-initializes feedback buffer
