@@ -103,6 +103,6 @@ is `struct StdTuning` in `src/dexed.cpp`.
 
 ## Whitespace
 
-`msfa/env.cc` and `EngineMkI.cpp` are stored here with LF line endings where
-upstream uses CRLF. Diff with `diff -w` when comparing them, or the real changes
-are lost in the noise.
+`msfa/env.cc` is stored here with LF line endings where upstream uses CRLF.
+Diff it with `diff -w`, or its one real difference (a blank line) is lost in 215
+lines of noise. The other vendored files keep upstream's CRLF.

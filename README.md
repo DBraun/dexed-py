@@ -2,7 +2,7 @@
 
 Python bindings for the [Dexed](https://github.com/asb2m10/dexed) DX7 synthesizer. Supports high-level patch editing, sysex import/export, and low-level parameter arrays.
 
-[Dexed](https://github.com/asb2m10/dexed) is licensed under the GPL v3. The [msfa](https://github.com/google/music-synthesizer-for-android) component (`src/msfa`) is Apache 2.0 licensed.
+[Dexed](https://github.com/asb2m10/dexed) is licensed under the GPL v3, and so is dexed-py. The [msfa](https://github.com/google/music-synthesizer-for-android) component (`src/msfa`) is Apache 2.0 licensed. The algorithm chart (`docs/dx7_algorithms.svg`) is MIT, so it can be reused outside a GPL context.
 
 ## Requirements
 

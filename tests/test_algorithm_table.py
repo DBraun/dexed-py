@@ -38,7 +38,7 @@ def _decode_cpp_table():
     adding to that bus rather than replacing it, and the two feedback tap bits.
     Writing to bus 0 means writing to the audio output, i.e. being a carrier.
     """
-    body = FM_CORE.read_text().split("algorithms[32] = {")[1].split("};")[0]
+    body = FM_CORE.read_text(encoding="utf-8").split("algorithms[32] = {")[1].split("};")[0]
     rows = re.findall(r"\{\s*\{([^}]*)\}\s*\}", body)
     assert len(rows) == 32, f"expected 32 algorithms, found {len(rows)}"
 

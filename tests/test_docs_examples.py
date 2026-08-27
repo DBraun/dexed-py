@@ -25,7 +25,9 @@ def _snippets(pattern):
     for path in DOCS:
         if not path.exists():
             continue
-        for number, line in enumerate(path.read_text().splitlines(), start=1):
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             if re.search(pattern, line):
                 found.append((path.name, number, line.strip()))
     return found
@@ -100,12 +102,12 @@ def test_version_metadata_agrees_everywhere():
     import dexed
 
     root = Path(__file__).resolve().parent.parent
-    citation = (root / "CITATION.cff").read_text()
+    citation = (root / "CITATION.cff").read_text(encoding="utf-8")
     match = re.search(r'^version:\s*"([^"]+)"', citation, re.MULTILINE)
     assert match, "CITATION.cff has no version field"
     assert match.group(1) == dexed.__version__
 
-    changelog = (root / "CHANGELOG.md").read_text()
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     assert f"## [{dexed.__version__}]" in changelog, (
         f"CHANGELOG.md has no section for {dexed.__version__}"
     )
@@ -120,18 +122,20 @@ def test_license_metadata_agrees_everywhere():
     root = Path(__file__).resolve().parent.parent
     expected = "GPL-3.0-or-later"
 
-    pyproject = (root / "pyproject.toml").read_text()
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r'^license\s*=\s*"([^"]+)"', pyproject, re.MULTILINE)
     assert match, "pyproject.toml has no license expression"
     assert match.group(1) == expected
 
-    citation = (root / "CITATION.cff").read_text()
+    citation = (root / "CITATION.cff").read_text(encoding="utf-8")
     match = re.search(r"^license:\s*(\S+)", citation, re.MULTILINE)
     assert match, "CITATION.cff has no license field"
     assert match.group(1) == expected
 
     # The bundled licence text is the GPL, not Apache.
-    assert "GNU GENERAL PUBLIC LICENSE" in (root / "LICENSE").read_text()
+    assert "GNU GENERAL PUBLIC LICENSE" in (
+        root / "LICENSE"
+    ).read_text(encoding="utf-8")
 
     # PEP 639: a license expression and License:: classifiers are exclusive.
     assert "License :: OSI Approved" not in pyproject
